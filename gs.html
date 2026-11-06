@@ -1775,6 +1775,7 @@
 
     // Variables pour transition fluide entre images (basée sur position, pas temps)
     let isTransitioning = false;
+    let transitionProgress = 0; // déclarée : en module (mode strict) une variable non déclarée provoque une erreur
     let oldColors = null;
     let newColors = null;
     let oldDepths = null;
