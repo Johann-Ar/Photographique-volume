@@ -1721,6 +1721,7 @@
     // Scènes SHARP préparées par ml-sharp/volume2.py : base brute + couche molécules (on s'enfonce dans l'image)
     const sharpScenes = new SharpScenes(sceneGroup);
     let sharpTime = 0;
+    const GS_CAMERA_END = -15; // en mode SHARP la caméra va jusqu'à z = -15 : elle traverse le plan de la photo (z = 0)
     let splatMode = false;                      // false = points, true = gaussiennes
     let pointsDepthSign = 1;                    // 1 = sens d'origine des points, -1 = sens inversé (test)
     let pointsOcclusion = false;                // test : tampon de profondeur pour les points
@@ -2295,6 +2296,7 @@
       splatMode = on;
       if (particles) particles.visible = !on;
       sharpScenes.setVisible(on);
+      camera.position.z = -minZoom - (-minZoom - (on ? GS_CAMERA_END : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
       else lastAppliedDisparity = null; // les points recalculent leur profondeur au retour
       needsResizeRender = true;          // forcer un rendu
@@ -2310,7 +2312,7 @@
       needsResizeRender = true;
     }
     // Test : fixer le niveau de zoom (0 = loin, 0.82 = profondeur max)
-    function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - maxZoom) * z; needsResizeRender = true; }
+    function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - (splatMode ? GS_CAMERA_END : maxZoom)) * z; needsResizeRender = true; }
     // Touche G : bascule Points <-> Gaussiennes SHARP, à tout moment
     window.addEventListener('keydown', (e) => {
       if (e.key === 'g' || e.key === 'G') setSplatMode(!splatMode);
@@ -4105,7 +4107,7 @@
         // Lerp fluide vers la position cible
         zoomLevel += (targetZoomLevel - zoomLevel) * scrollConfig.global.zoomLerp;
         // Déplacer la caméra (au lieu du sceneGroup) : de z=25 (loin) à z=0 (proche)
-        camera.position.z = -minZoom - (-minZoom - maxZoom) * zoomLevel;
+        camera.position.z = -minZoom - (-minZoom - (splatMode ? GS_CAMERA_END : maxZoom)) * zoomLevel; // SHARP : on traverse la photo
 
         // Info overlay time-fade: trigger at 1/4 of X on forward path, then fade by time
         if (zoomLevel <= 0.005) {

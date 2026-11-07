@@ -3,13 +3,14 @@
 //   Ressources/sharp/IMG_00X_base.spz : gaussiennes SHARP brutes, coupées au rectangle, teinte Floc'h
 //   Ressources/sharp/IMG_00X_mol.spz  : couche « molécules » (petites sphères) posée sur la base
 // Repère des fichiers : SHARP (x droite, y bas, z devant) avec le plan de la photo à z = 1.
-// Sur la carte graphique (dyno de Spark), chaque gaussienne glisse le long de son rayon de vue :
-//   z -> z^t  (t = 0 : tout sur le plan = photo plate et nette ; t = 1 : vraie profondeur SHARP)
-// et sa taille suit le même facteur, si bien que la photo reste exacte vue depuis l'axe.
+// Sur la carte graphique (dyno de Spark), avec t = avancement du relief (0..1) :
+//   profondeur  zt = 1 + (z - 1) t           (t = 0 : tout sur le plan z = 1 = photo plate et nette)
+//   étalement   spread = 1 + (zt - 1) t      (début : poussée droit vers l'arrière, comme les points ;
+//                                             fin (t = 1) : vraie géométrie SHARP, vue depuis son point de vue)
 import { SplatMesh, dyno } from "@sparkjsdev/spark";
 
 export const sharp = {
-  reliefMul: 0.7,   // RELIEF : profondeur maximale atteinte au fond du scroll (0..1)
+  reliefMul: 1.0,   // RELIEF : part de la vraie profondeur SHARP atteinte au fond du scroll (0..1)
   molSize: 1.0,     // TAILLE des molécules
   moveMul: 1.0,     // MOUVEMENT des molécules
   showMol: true,    // afficher la couche molécules
@@ -21,13 +22,13 @@ const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0) };
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
   float z = max(${i.gsplat}.center.z, 0.05);
-  float zt = pow(z, ${i.t});
-  float f = zt / z;
-  ${o.gsplat}.center *= f;
-  ${o.gsplat}.scales *= f * ${i.size};
+  float zt = 1.0 + (z - 1.0) * ${i.t};
+  float spread = 1.0 + (zt - 1.0) * ${i.t};
+  ${o.gsplat}.center = vec3(${i.gsplat}.center.xy / z * spread, zt);
+  ${o.gsplat}.scales *= spread / z * ${i.size};
   float ph = float(${i.gsplat}.index) * 0.3;
-  ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * zt;
-  ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * zt;
+  ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * spread;
+  ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * spread;
   float h = fract(sin(float(${i.gsplat}.index) * 12.9898) * 43758.5453);
   if (h > ${i.fade}) ${o.gsplat}.rgba.a = 0.0;
 `.split("\n").map((l) => l.trim()).filter(Boolean);
