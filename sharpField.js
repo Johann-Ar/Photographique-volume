@@ -51,23 +51,19 @@ const GLSL = (o, i) => `
   float ph = fi * 0.3;
   ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * z;
   ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
-  // Changement de photo. Disparition : chaque cellule se resserre, dérive doucement et s'efface.
-  // Apparition : sur place, du centre de l'image vers les bords, chaque cellule grandit à sa position.
+  // Changement de photo, sur place : apparition du centre vers les bords (chaque cellule grandit à sa
+  // position) ; la disparition est la même animation jouée à l'envers (des bords vers le centre).
   float r = clamp(length(vec2(${o.gsplat}.center.x / z / 0.59, ${o.gsplat}.center.y / z / 0.30)) / 1.42, 0.0, 1.0);
-  float stag = mix(h, r * 0.8 + h * 0.2, ${i.inn});
+  float stag = r * 0.8 + h * 0.2;
   float d = 1.0 - clamp((${i.fade} - stag * 0.6) / 0.4, 0.0, 1.0);
   if (d > 0.0) {
-    if (${i.inn} < 0.5) {
-      vec3 dir = normalize(vec3(h, h2, h3) * 2.0 - 1.0 + 1e-4);
-      ${o.gsplat}.center += dir * d * 0.035 * z;
-      ${o.gsplat}.center.y -= d * d * 0.025 * z;
-      ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0007 * z), smoothstep(0.0, 0.35, d)) * (1.0 - 0.4 * d);
-      ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.45, 1.0, d);
-    } else {
-      ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0006 * z), smoothstep(0.0, 0.5, d)) * (1.0 - 0.7 * d);
-      ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.3, 1.0, d);
-    }
+    ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0006 * z), smoothstep(0.0, 0.5, d)) * (1.0 - 0.7 * d);
+    ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.3, 1.0, d);
   }
+  // Cadre net : tout ce qui sort du rectangle de la photo (vu depuis le point de vue SHARP) est coupé,
+  // après le mouvement ; les bords restent des lignes droites même quand on avance dans la scène.
+  vec2 uv = ${o.gsplat}.center.xy / max(${o.gsplat}.center.z, 0.05);
+  if (abs(uv.x) > 0.587 || abs(uv.y) > 0.300) ${o.gsplat}.rgba.a = 0.0;
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
@@ -92,7 +88,7 @@ function makeLayer(url, isMol) {
 
 // Changement de photo automatique, sans chevauchement :
 // pause sur la photo -> dissolution en cellules -> noir -> la nouvelle photo se recompose
-export const TRANSITION = { wait: 1000, out: 1400, black: 400, in: 1400 }; // millisecondes
+export const TRANSITION = { wait: 600, out: 800, black: 250, in: 800 }; // millisecondes
 
 export class SharpScenes {
   constructor(parent, count = 7) {
