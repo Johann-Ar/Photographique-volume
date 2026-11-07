@@ -11,7 +11,7 @@ import { SplatMesh, dyno } from "@sparkjsdev/spark";
 export const sharp = {
   reliefMul: 1.0,   // RELIEF : part de la vraie profondeur SHARP atteinte au fond du scroll (0..1)
   molSize: 1.0,     // TAILLE des molécules
-  moveMul: 1.0,     // MOUVEMENT des molécules
+  moveMul: 0.3,     // MOUVEMENT des cellules (1 = amplitude des points ; 0.3 = moins de dispersion au fond du scroll)
   showMol: false,   // ancienne couche molécules séparée (désactivée : une seule matière)
   roundness: 0.5,   // CELLULES : 0 = gaussiennes SHARP d'origine, 1 = boules
 };
