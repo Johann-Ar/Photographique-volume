@@ -41,7 +41,8 @@ const GLSL = (o, i) => `
   float h2 = fract(sin(fi * 78.233) * 12543.1);
   float h3 = fract(sin(fi * 39.425) * 24634.6);
   // anti-grille : chaque gaussienne décalée au hasard de moins d'un pixel (SHARP en pose une par pixel)
-  ${o.gsplat}.center.xy += (vec2(h2, h3) - 0.5) * 1.2 * z / 1288.0;
+  // (nul au début du parcours : au passage photo 2D -> SHARP les deux images se superposent au pixel près)
+  ${o.gsplat}.center.xy += (vec2(h2, h3) - 0.5) * 1.2 * z / 1288.0 * clamp(${i.t} * 4.0, 0.0, 1.0);
   // cellules : la gaussienne s'arrondit en partie, sans changer de volume
   float g = pow(max(${i.gsplat}.scales.x * ${i.gsplat}.scales.y * ${i.gsplat}.scales.z, 1e-30), 1.0 / 3.0);
   ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0), ${i.rnd}) * ${i.size};

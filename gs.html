@@ -1052,12 +1052,14 @@
       padding-bottom: 40px;
     }
     .intro-text {
-      font-family: 'Space Grotesk', sans-serif;
-      font-size: clamp(15px, 2vw, 20px);
-      font-weight: 300;
-      line-height: 1.25;
-      letter-spacing: 0.01em;
-      color: rgba(255, 255, 255, 0.85);
+      /* style échangé avec .intro-text-secondary (italique serif pour le premier bloc) */
+      font-family: 'Instrument Serif', Georgia, serif;
+      font-size: clamp(16px, 2.2vw, 22px);
+      font-style: italic;
+      font-weight: 400;
+      line-height: 1.5;
+      letter-spacing: 0.02em;
+      color: rgba(255, 255, 255, 0.6);
       opacity: 0;
       transform: translateY(25px);
     }
@@ -1072,13 +1074,13 @@
       display: block; width: 100%; height: auto;
     }
     .intro-text-secondary {
-      font-family: 'Instrument Serif', Georgia, serif;
-      font-size: clamp(16px, 2.2vw, 22px);
-      font-style: italic;
-      font-weight: 400;
-      line-height: 1.5;
-      letter-spacing: 0.02em;
-      color: rgba(255, 255, 255, 0.6);
+      /* style échangé avec .intro-text (sans-serif droit pour le second bloc) */
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: clamp(15px, 2vw, 20px);
+      font-weight: 300;
+      line-height: 1.25;
+      letter-spacing: 0.01em;
+      color: rgba(255, 255, 255, 0.85);
       opacity: 0;
       transform: translateY(20px);
     }
@@ -2347,7 +2349,7 @@
     let photoW = 0;
     function updatePhotoPlane() {
       // fondu court : les couleurs étant alignées, la photo et SHARP se superposent exactement au point de vue
-      const PHOTO_FADE = 0.02;   // court : fini avant que la caméra bouge (sinon la perspective dédouble l'image)
+      const PHOTO_FADE = 0.045;  // fini avant que la caméra bouge vraiment (sinon la perspective dédouble l'image)
       const flat = splatMode && zoomLevel < PHOTO_FADE && (sharpScenes.phase !== 'run');
       const k = Math.min(1, zoomLevel / PHOTO_FADE);
       const target = flat ? 1 - k * k * (3 - 2 * k) : 0;
