@@ -812,7 +812,7 @@
       font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
       color: rgba(255,255,255,0.7);
       /* gs.html : placée sous ENTRER, sans le décentrer */
-      position: absolute; top: calc(50% + 90px); left: 50%; transform: translateX(-50%);
+      position: absolute; top: calc(50% + 55px); left: 50%; transform: translateX(-50%);
       padding-left: 0.3em; /* compense l'espacement des lettres */
       pointer-events: none; user-select: none;
       opacity: 0;
@@ -2355,12 +2355,12 @@
     let photoW = 0;
     function updatePhotoPlane() {
       // fondu court : les couleurs étant alignées, la photo et SHARP se superposent exactement au point de vue
-      const PHOTO_FADE = 0.045;  // fini avant que la caméra bouge vraiment (sinon la perspective dédouble l'image)
+      const PHOTO_FADE = 0.06;   // fini avant que la caméra bouge vraiment (photo posée à la profondeur médiane)
       const flat = splatMode && zoomLevel < PHOTO_FADE && (sharpScenes.phase !== 'run');
       const k = Math.min(1, zoomLevel / PHOTO_FADE);
       const target = flat ? 1 - k * k * (3 - 2 * k) : 0;
       if (window.photoVolumeGS && window.photoVolumeGS.forcePhoto != null) { photoW = window.photoVolumeGS.forcePhoto; }
-      else photoW += (target - photoW) * 0.12;  // toujours progressif
+      else photoW += (target - photoW) * 0.08;  // toujours progressif, un peu plus doux
       if (photoW < 0.002) photoW = 0;
       const tex = photoW > 0 ? photoTexture(sharpScenes.current) : null;
       photoPlane.visible = !!tex && photoW > 0;
@@ -4908,6 +4908,9 @@
       zoomLevel = 0;
       currentAppliedDisparity = 0;
       introPage.classList.add('dismissing');
+      // gs.html : on arrive sur les photos avec la caméra centrée, quoi qu'ait fait la souris avant
+      if (window.recenterLook) window.recenterLook();
+      dragTargetX = dragTargetY = dragCurrentX = dragCurrentY = dragVelocityX = dragVelocityY = 0;
       // Déverrouiller le scroll après la fin de la transition intro→expérience
       setTimeout(() => {
         experienceScrollLocked = false;
@@ -5012,19 +5015,29 @@
 
     // Le regard suit simplement la position du curseur (sans clic) quand l'interface texte est cachée
     var hoverLook = false;
+    // gs.html : regard relatif. La position de la souris au moment où le regard (re)commence devient le centre ;
+    // seul le mouvement à partir de là fait tourner la caméra. Recentrage seul après 2,5 s sans mouvement, ou au scroll.
+    let hoverAnchor = null, hoverTimer = null;
+    function recenterLook() { hoverLook = false; hoverAnchor = null; clearTimeout(hoverTimer); }
+    window.recenterLook = recenterLook;
     window.addEventListener('mousemove', (e) => {
       registerUserActivity();
       if (clickGateActive || landingActive || introActive) return;
-      if (infoOverlay.classList.contains('visible')) { hoverLook = false; return; }
-      hoverLook = true;
+      if (infoOverlay.classList.contains('visible')) { recenterLook(); return; }
       const nx = (e.clientX / window.innerWidth) * 2 - 1;
       const ny = (e.clientY / window.innerHeight) * 2 - 1;
-      // Cadre d'orientation réduit (≈ ±4,8° horizontal, ±3,4° vertical)
-      dragTargetX = nx * DRAG_MAX_OFFSET * 0.6;
-      dragTargetY = -ny * DRAG_MAX_OFFSET * 0.42;
+      if (!hoverAnchor) hoverAnchor = { x: nx, y: ny };
+      hoverLook = true;
+      const dx = Math.max(-1, Math.min(1, nx - hoverAnchor.x));
+      const dy = Math.max(-1, Math.min(1, ny - hoverAnchor.y));
+      dragTargetX = dx * DRAG_MAX_OFFSET * 0.6;
+      dragTargetY = -dy * DRAG_MAX_OFFSET * 0.42;
       dragVelocityX = 0; dragVelocityY = 0;
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(recenterLook, 2500);
     });
-    document.addEventListener('mouseleave', () => { hoverLook = false; });
+    window.addEventListener('wheel', () => recenterLook(), { passive: true }); // le scroll ramène au centre
+    document.addEventListener('mouseleave', () => recenterLook());
 
     window.addEventListener('mousemove', (e) => {
       if (!dragActive) return;
