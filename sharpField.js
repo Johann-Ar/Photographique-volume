@@ -13,18 +13,25 @@ export const sharp = {
   molSize: 1.0,     // TAILLE des molécules
   moveMul: 0.3,     // MOUVEMENT des cellules (1 = amplitude des points ; 0.3 = moins de dispersion au fond du scroll)
   showMol: false,   // ancienne couche molécules séparée (désactivée : une seule matière)
-  roundness: 0.5,   // CELLULES : 0 = gaussiennes SHARP d'origine, 1 = boules
+  roundness: 0.5,   // CELLULES : arrondi maximal (atteint au fond du scroll), 0 = gaussiennes SHARP d'origine
+  depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
+  curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
 };
 
 // L'œil de SHARP est placé exactement au départ de la caméra du site (z = 25) : vue de là, la vraie
 // scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
 // Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
 const D = 25;
-const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5) };
+const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
-  float z = max(${i.gsplat}.center.z, 0.05);
+  // Cadre stable : la profondeur est compressée le long des rayons (z -> z^gamma) ; le fond devient
+  // presque un plan qui garde la forme du rectangle, et la vue depuis le départ reste identique (nette).
+  float z0 = max(${i.gsplat}.center.z, 0.05);
+  float z = pow(z0, ${i.gam});
+  ${o.gsplat}.center *= z / z0;
+  ${o.gsplat}.scales *= z / z0;
   float fi = float(${i.gsplat}.index);
   float h = fract(sin(fi * 12.9898) * 43758.5453);
   float h2 = fract(sin(fi * 78.233) * 12543.1);
@@ -33,7 +40,7 @@ const GLSL = (o, i) => `
   ${o.gsplat}.center.xy += (vec2(h2, h3) - 0.5) * 1.2 * z / 1288.0;
   // cellules : la gaussienne s'arrondit en partie, sans changer de volume
   float g = pow(max(${i.gsplat}.scales.x * ${i.gsplat}.scales.y * ${i.gsplat}.scales.z, 1e-30), 1.0 / 3.0);
-  ${o.gsplat}.scales = mix(${i.gsplat}.scales, vec3(g), ${i.rnd}) * ${i.size};
+  ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0), ${i.rnd}) * ${i.size};
   float ph = fi * 0.3;
   ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * z;
   ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
@@ -55,9 +62,9 @@ function makeLayer(url, isMol) {
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -149,12 +156,14 @@ export class SharpScenes {
     shared.time.value = time;
     this._tick();
     this._apply();
-    shared.round.value = sharp.roundness;
+    const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
+    shared.round.value = sharp.roundness * p;
+    shared.gamma.value = sharp.depthGamma;
     for (const [, s] of this.scenes) {
-      for (const l of [s.base, s.mol]) l.u.move.value = (movement * 2 * sharp.moveMul) / D; // même amplitude que les points
+      for (const l of [s.base, s.mol]) l.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D; // même amplitude que les points
       s.mol.u.size.value = sharp.molSize;
     }
-    const key = [sharp.roundness, time, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
+    const key = [shared.round.value.toFixed(3), sharp.depthGamma, time, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
     if (key !== this.last) {
       this.last = key;
       for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
