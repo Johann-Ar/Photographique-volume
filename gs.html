@@ -1755,7 +1755,9 @@
     const SCROLL_DEAD_ZONE_DISTANCE = 0.100; // Distance à scroller avant de re-zoomer
     let isInDeadZone = false;
     // En mode SHARP la zone d'arrêt (retour à la photo plate) sert au changement de photo : plus longue
-    const deadZoneDistance = () => (splatMode ? 0.35 : SCROLL_DEAD_ZONE_DISTANCE); // Flag pour savoir si on est dans la zone morte
+    // pendant le changement de photo SHARP, la zone d'arrêt ne se termine pas au scroll
+    let gsWaitingTransition = false;
+    const deadZoneDistance = () => (splatMode && (gsWaitingTransition || sharpScenes.current !== currentImageIndex) ? Infinity : SCROLL_DEAD_ZONE_DISTANCE); // Flag pour savoir si on est dans la zone morte
 
     // Système de cycle de scroll bidirectionnel avec inversion automatique
     const MAX_ZOOM_LEVEL = 0.826632; // Point de zoom max (début transition image)
@@ -4487,16 +4489,17 @@
 
       // GAUSSIENNES (SHARP) : relief = disparité du scroll, mêmes mouvements que les points
       if (splatMode) {
-        // Aller-retour dans le même volume : la photo change seulement au retour à plat (zone d'arrêt)
-        if (isInDeadZone && sharpScenes.current !== currentImageIndex && sharpScenes.previous == null) sharpScenes.crossTo(currentImageIndex);
-        if (!isInDeadZone && sharpScenes.previous == null && sharpScenes.current !== currentImageIndex && zoomLevel < 0.002 && scrollPhase === 'zoomIn') sharpScenes.show(currentImageIndex);
-        const gsMix = sharpScenes.previous != null ? (isInDeadZone ? scrollDeadZoneAccumulator / deadZoneDistance() : 1) : 1;
+        // Aller-retour dans le même volume : la photo change au retour à plat, automatiquement (pas au scroll)
+        if (isInDeadZone && sharpScenes.current !== currentImageIndex) sharpScenes.startTransition(currentImageIndex);
+        if (isInDeadZone && !sharpScenes.busy() && sharpScenes.current === currentImageIndex && gsWaitingTransition) {
+          isInDeadZone = false; scrollDeadZoneAccumulator = 0; // transition finie : le scroll reprend
+        }
+        gsWaitingTransition = sharpScenes.busy();
         if (particleParams.movement > 0) sharpTime += 0.01;
         sharpScenes.update({
           disparity: currentAppliedDisparity,
           movement: particleParams.movement,
           time: sharpTime,
-          mix: gsMix,
         });
         needsRender = true; // Spark trie les gaussiennes en arrière-plan : rendre chaque image
       }

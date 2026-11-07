@@ -67,15 +67,21 @@ function makeLayer(url, isMol) {
   return { mesh, u, isMol };
 }
 
+// Changement de photo automatique, sans chevauchement :
+// pause sur la photo -> dissolution en cellules -> noir -> la nouvelle photo se recompose
+export const TRANSITION = { wait: 1000, out: 1400, black: 400, in: 1400 }; // millisecondes
+
 export class SharpScenes {
   constructor(parent, count = 7) {
     this.parent = parent;
     this.count = count;
     this.scenes = new Map();   // index -> { base, mol }
-    this.current = null;
-    this.previous = null;
+    this.current = null;       // photo affichée (ou qui s'efface pendant la transition)
+    this.next = null;          // photo qui va apparaître
+    this.t0 = 0;               // début de la transition (performance.now)
+    this.fadeCur = 1;
+    this.fadeNext = 0;
     this.visible = false;
-    this.mix = 1;
     this.last = "";
   }
 
@@ -99,18 +105,23 @@ export class SharpScenes {
 
   isReady(i) { const s = this.scenes.get(i); return !!(s && s.base.mesh.isInitialized && s.mol.mesh.isInitialized); }
 
-  show(i) { this.current = i; this.previous = null; this.mix = 1; this._get(i); this._apply(); }
+  // Une transition est en cours (le scroll doit attendre)
+  busy() { return this.next != null; }
 
-  crossTo(i) {
-    if (i === this.current) return;
-    this.previous = this.current; this.current = i; this.mix = 0; this._get(i); this._apply();
+  // Image affichée tout de suite (chargement, flèches, retour aux gaussiennes)
+  show(i) { this.current = i; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._get(i); this._apply(); }
+
+  // Lancer le changement de photo (automatique, chronométré)
+  startTransition(i) {
+    if (i === this.current || this.next != null) return;
+    this.next = i; this._get(i); this.t0 = performance.now();
   }
 
   setVisible(v) { this.visible = v; if (v) this.loadAll(); this._apply(); }
 
   _apply() {
     for (const [i, s] of this.scenes) {
-      const fade = i === this.current ? this.mix : i === this.previous ? 1 - this.mix : 0;
+      const fade = i === this.current ? this.fadeCur : i === this.next ? this.fadeNext : 0;
       for (const layer of [s.base, s.mol]) {
         const on = this.visible && fade > 0 && (!layer.isMol || sharp.showMol);
         layer.mesh.visible = on;
@@ -119,23 +130,31 @@ export class SharpScenes {
     }
   }
 
-  // À chaque image. disparity : 0..7 (états du parcours) ; mix : avancement de la transition (0..1)
-  update({ disparity, movement, time, mix = 1 }) {
+  // Avance la transition selon le temps (pas le scroll)
+  _tick() {
+    if (this.next == null) return;
+    const T = TRANSITION, e = performance.now() - this.t0;
+    const ready = this.isReady(this.next);
+    if (e < T.wait) { this.fadeCur = 1; this.fadeNext = 0; }
+    else if (e < T.wait + T.out) { this.fadeCur = 1 - (e - T.wait) / T.out; this.fadeNext = 0; }
+    else if (e < T.wait + T.out + T.black || !ready) { this.fadeCur = 0; this.fadeNext = 0; }   // noir (et on attend la scène si besoin)
+    else if (e < T.wait + T.out + T.black + T.in) { this.fadeCur = 0; this.fadeNext = (e - T.wait - T.out - T.black) / T.in; }
+    else { this.current = this.next; this.next = null; this.fadeCur = 1; this.fadeNext = 0; }
+  }
+
+  // À chaque image. disparity : 0..7 (états du parcours)
+  update({ disparity, movement, time }) {
     if (!this.visible) return;
-    if (this.forceMix != null) mix = this.forceMix; // test : figer l'avancement du changement de photo
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
-    if (this.previous != null) {
-      this.mix = Math.min(1, Math.max(0, mix));
-      if (this.mix >= 1) this.previous = null;
-    }
+    this._tick();
     this._apply();
     shared.round.value = sharp.roundness;
     for (const [, s] of this.scenes) {
       for (const l of [s.base, s.mol]) l.u.move.value = (movement * 2 * sharp.moveMul) / D; // même amplitude que les points
       s.mol.u.size.value = sharp.molSize;
     }
-    const key = [sharp.roundness, time, this.mix.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
+    const key = [sharp.roundness, time, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
     if (key !== this.last) {
       this.last = key;
       for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
