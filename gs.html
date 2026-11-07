@@ -1661,7 +1661,7 @@
   <script type="module">
     import * as THREE from "three";
     import { gs, addSparkRenderer, buildCells, SplatField } from "./splatField.js";
-    import { sharp, SharpScenes } from "./sharpField.js";
+    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js";
 
     // ═══════════════════════════════════════════════
     // DÉTECTION MOBILE + ADAPTATION QUALITÉ
@@ -2328,11 +2328,11 @@
     // Au dézoom complet (et pendant la pause avant / juste après un changement de photo), on affiche la
     // vraie photo, avec le même recadrage et les mêmes couleurs Floc'h que les points, sur un plan placé
     // exactement là où SHARP la projette. Dès qu'on scrolle, elle laisse la place à SHARP.
-    const photoPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+    // grille pliée selon la profondeur SHARP (voir bendPhoto) : chaque point de la photo est à la distance de la matière qu'il recouvre
+    const photoPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, GW - 1, GH - 1),
       // ne bouche pas la profondeur (sinon l'arrière-plan SHARP derrière le plan n'est plus dessiné) : dessinée par-dessus
       new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false, depthWrite: false, depthTest: false }));
     photoPlane.renderOrder = 10;
-    photoPlane.scale.set(2 * 0.587 * 25, 2 * 0.3003 * 25, 1);   // rectangle de la photo vu depuis l'œil de SHARP (z = 25)
     photoPlane.visible = false;
     sceneGroup.add(photoPlane);
     const photoTextures = new Map();
@@ -2352,7 +2352,23 @@
       photoTextures.set(idx, tex);
       return tex;
     }
-    let photoW = 0;
+    let photoW = 0, photoBentFor = null;
+    // Plie la photo : sommet (colonne i, ligne j) = point du rayon de vue (u, v) à la profondeur SHARP de la case.
+    // Vu depuis l'œil (z = 25), la photo reste exactement plate ; quand la caméra avance, chaque zone bouge comme SHARP.
+    function bendPhoto(idx) {
+      const grid = sharpScenes.depthGrid(idx);
+      if (!grid) return false;
+      const pos = photoPlane.geometry.attributes.position, g = sharp.depthGamma;
+      for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+        const u = -HALF_U + 2 * HALF_U * i / (GW - 1), v = -HALF_V + 2 * HALF_V * j / (GH - 1);
+        const zc = Math.pow(Math.max(grid[j * GW + i], 0.05), g);   // même compression de profondeur que les gaussiennes
+        pos.setXYZ(j * GW + i, 25 * u * zc, -25 * v * zc, 25 - 25 * zc);
+      }
+      pos.needsUpdate = true;
+      photoPlane.geometry.computeBoundingSphere();
+      photoBentFor = idx;
+      return true;
+    }
     function updatePhotoPlane() {
       // fondu court : les couleurs étant alignées, la photo et SHARP se superposent exactement au point de vue
       const PHOTO_FADE = 0.06;   // fini avant que la caméra bouge vraiment (photo posée à la profondeur médiane)
@@ -2366,10 +2382,9 @@
       photoPlane.visible = !!tex && photoW > 0;
       if (tex && photoPlane.material.map !== tex) { photoPlane.material.map = tex; photoPlane.material.needsUpdate = true; }
       photoPlane.material.opacity = photoW;
-      // posée à la profondeur médiane de la scène : pendant le fondu, elle grossit au même rythme que SHARP
-      const zm = sharpScenes.photoDepth(sharpScenes.current);
-      photoPlane.position.z = 25 - 25 * zm;
-      photoPlane.scale.set(2 * 0.587 * 25 * zm, 2 * 0.3003 * 25 * zm, 1);
+      // pliée selon la profondeur SHARP de la scène affichée
+      if (photoBentFor !== sharpScenes.current) bendPhoto(sharpScenes.current);
+      if (photoBentFor !== sharpScenes.current) photoPlane.visible = false; // pas encore de carte : on attend
       return photoW;
     }
 

@@ -100,6 +100,45 @@ function makeLayer(url, isMol) {
 // pause sur la photo -> dissolution en cellules -> noir -> la nouvelle photo se recompose
 export const TRANSITION = { wait: 600, out: 800, black: 250, in: 800 }; // millisecondes
 
+// Grille de profondeur (GW x GH) vue depuis le point de vue SHARP : pour chaque case, la profondeur de la
+// matière visible (25e centile des gaussiennes qui s'y projettent = surface la plus proche), lissée.
+export const GW = 96, GH = 49, HALF_U = 0.587, HALF_V = 0.3003;
+function depthGridFrom(ps) {
+  const n = ps.numSplats, cells = Array.from({ length: GW * GH }, () => []), all = [];
+  for (let k = 0; k < n; k += 9) {
+    const u = unpackSplat(ps.packedArray, k, ps.splatEncoding);
+    if (u.opacity < 0.3 || u.center.z < 0.05) continue;
+    const gx = Math.round(((u.center.x / u.center.z) / HALF_U * 0.5 + 0.5) * (GW - 1));
+    const gy = Math.round(((u.center.y / u.center.z) / HALF_V * 0.5 + 0.5) * (GH - 1));
+    if (gx < 0 || gx >= GW || gy < 0 || gy >= GH) continue;
+    cells[gy * GW + gx].push(u.center.z); all.push(u.center.z);
+  }
+  all.sort((a, b) => a - b);
+  const median = all.length ? all[all.length >> 1] : 1;
+  let z = new Float32Array(GW * GH).fill(NaN);
+  cells.forEach((c, i) => { if (c.length) { c.sort((a, b) => a - b); z[i] = c[Math.floor(c.length * 0.25)]; } });
+  for (let pass = 0; pass < 20; pass++) {        // cases vides : moyenne des voisines
+    let empty = 0; const nz = z.slice();
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const i = y * GW + x; if (!isNaN(z[i])) continue; let sum = 0, c = 0;
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) { const xx = x + dx, yy = y + dy;
+        if (xx >= 0 && xx < GW && yy >= 0 && yy < GH && !isNaN(z[yy * GW + xx])) { sum += z[yy * GW + xx]; c++; } }
+      if (c) nz[i] = sum / c; else empty++;
+    }
+    z = nz; if (!empty) break;
+  }
+  for (let i = 0; i < z.length; i++) if (isNaN(z[i])) z[i] = median;
+  const sm = new Float32Array(z.length);           // lissage 3 x 3 (évite les déchirures)
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    let sum = 0, c = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy;
+      if (xx >= 0 && xx < GW && yy >= 0 && yy < GH) { sum += z[yy * GW + xx]; c++; } }
+    sm[y * GW + x] = sum / c;
+  }
+  sm.median = median;
+  return sm;
+}
+
 export class SharpScenes {
   constructor(parent, count = 7) {
     this.parent = parent;
@@ -131,16 +170,8 @@ export class SharpScenes {
       };
       this.parent.add(s.base.mesh, s.mol.mesh);
       this.scenes.set(i, s);
-      // profondeur médiane de la scène (échantillon), pour placer la photo 2D au bon plan
-      s.base.mesh.initialized.then((m) => {
-        const ps = m.packedSplats, n = ps.numSplats, zs = [];
-        for (let k = 0; k < n; k += 37) {
-          const u = unpackSplat(ps.packedArray, k, ps.splatEncoding);
-          if (u.opacity > 0.3) zs.push(u.center.z);
-        }
-        zs.sort((a, b) => a - b);
-        s.zMedian = zs.length ? zs[zs.length >> 1] : 1;
-      });
+      // Carte de profondeur tirée de SHARP (pour plier la photo 2D) + profondeur médiane
+      s.base.mesh.initialized.then((m) => { s.depthGrid = depthGridFrom(m.packedSplats); s.zMedian = s.depthGrid.median; });
     }
     return s;
   }
@@ -151,6 +182,7 @@ export class SharpScenes {
   busy() { return this.next != null; }
 
   // Profondeur (après compression) du plan où poser la photo 2D : 1 = plan proche
+  depthGrid(i) { const s = this.scenes.get(i); return s && s.depthGrid ? s.depthGrid : null; }
   photoDepth(i) { const s = this.scenes.get(i); return s && s.zMedian ? Math.pow(Math.max(1, s.zMedian), sharp.depthGamma) : 1; }
 
   // Image affichée tout de suite (chargement, flèches, retour aux gaussiennes)
