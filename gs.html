@@ -2346,9 +2346,13 @@
     }
     let photoW = 0;
     function updatePhotoPlane() {
-      const flat = splatMode && zoomLevel < 0.06 && (sharpScenes.phase !== 'run');
-      const target = flat ? 1 - Math.min(1, zoomLevel / 0.06) : 0;
-      photoW += (target - photoW) * (target > photoW ? 0.12 : 0.35);  // apparition douce, départ rapide au scroll
+      // fondu long et doux : la photo s'efface progressivement sur les premiers 18 % du zoom
+      const PHOTO_FADE = 0.18;
+      const flat = splatMode && zoomLevel < PHOTO_FADE && (sharpScenes.phase !== 'run');
+      const k = Math.min(1, zoomLevel / PHOTO_FADE);
+      const target = flat ? 1 - k * k * (3 - 2 * k) : 0;
+      if (window.photoVolumeGS && window.photoVolumeGS.forcePhoto != null) { photoW = window.photoVolumeGS.forcePhoto; }
+      else photoW += (target - photoW) * 0.12;  // toujours progressif
       if (photoW < 0.002) photoW = 0;
       const tex = photoW > 0 ? photoTexture(sharpScenes.current) : null;
       photoPlane.visible = !!tex && photoW > 0;

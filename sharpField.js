@@ -62,6 +62,9 @@ const GLSL = (o, i) => `
   }
   // Cadre net : tout ce qui sort du rectangle de la photo (vu depuis le point de vue SHARP) est coupé,
   // après le mouvement ; les bords restent des lignes droites même quand on avance dans la scène.
+  // Couleurs : la page sort en linéaire (rendu r128 des points), et Spark applique alors srgbToLinear
+  // (pow 2,2) à chaque gaussienne ; on compense pour retrouver exactement les couleurs de la photo.
+  ${o.gsplat}.rgba.rgb = pow(max(${o.gsplat}.rgba.rgb, vec3(0.0)), vec3(1.0 / 2.2));
   vec2 uv = ${o.gsplat}.center.xy / max(${o.gsplat}.center.z, 0.05);
   if (abs(uv.x) > 0.587 || abs(uv.y) > 0.300) ${o.gsplat}.rgba.a = 0.0;
 `.split("\n").map((l) => l.trim()).filter(Boolean);
