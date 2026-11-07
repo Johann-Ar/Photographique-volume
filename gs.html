@@ -5000,7 +5000,15 @@
       // Setup experience scroll indicator (deferred from onReady)
       setupExperienceScrollIndicator();
       // Afficher la page info par défaut à l'entrée dans l'expérience
-      setTimeout(() => toggleInfoOverlay(true), 2100);
+      // gs.html : la page d'infos apparaît en même temps que l'image, pas avant (la scène SHARP peut charger plus
+      // longtemps que les 2,1 s d'origine) : on attend que l'image soit visible, au plus tôt après 0,6 s
+      { const t0 = performance.now();
+        const waitImage = () => {
+          const imageVisible = !splatMode ? !!particles : (photoW > 0.3 || (sharpScenes.isReady(sharpScenes.current) && photoW > 0.05));
+          if (performance.now() - t0 >= (splatMode ? 600 : 2100) && imageVisible) toggleInfoOverlay(true);
+          else if (performance.now() - t0 < 30000) setTimeout(waitImage, 80);
+        };
+        setTimeout(waitImage, 80); }
       // Tenter de démarrer l'audio (peut échouer si déclenché par wheel — pas un user gesture)
       AudioEngine.startAt(2);
       updateSoundToggleIcon();
