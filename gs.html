@@ -174,6 +174,14 @@
       user-select: none;
       -webkit-user-select: none;
     }
+    /* Écrans moyens (769 à 1240 px) : les blocs du bas et le pied de page ne tiennent plus côte à côte.
+       Le pied descend tout en bas, les blocs remontent au-dessus et s'adaptent à la largeur. */
+    @media (min-width: 769px) and (max-width: 1240px) and (pointer: fine) {
+      #info-overlay .info-footer { bottom: 22px; width: calc(100% - 160px); }
+      #info-overlay .info-section.left-top,
+      #info-overlay .info-section.left-bottom { bottom: 112px; max-width: min(308px, calc(50vw - 110px)); }
+      #info-overlay .info-section.right-top { max-width: min(308px, calc(50vw - 110px)); }
+    }
     #info-overlay .info-credits-btn {
       font-family: 'Space Grotesk', sans-serif;
       font-size: 11px; font-weight: 400;
