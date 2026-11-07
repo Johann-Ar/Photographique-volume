@@ -2325,7 +2325,9 @@
     // vraie photo, avec le même recadrage et les mêmes couleurs Floc'h que les points, sur un plan placé
     // exactement là où SHARP la projette. Dès qu'on scrolle, elle laisse la place à SHARP.
     const photoPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false }));
+      // ne bouche pas la profondeur (sinon l'arrière-plan SHARP derrière le plan n'est plus dessiné) : dessinée par-dessus
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false, depthWrite: false, depthTest: false }));
+    photoPlane.renderOrder = 10;
     photoPlane.scale.set(2 * 0.587 * 25, 2 * 0.3003 * 25, 1);   // rectangle de la photo vu depuis l'œil de SHARP (z = 25)
     photoPlane.visible = false;
     sceneGroup.add(photoPlane);
