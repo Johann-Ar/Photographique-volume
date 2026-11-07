@@ -1790,7 +1790,7 @@
     setInterval(() => {
       if (!window._audioIdle && performance.now() - lastUserActivity > 2500 && typeof AudioEngine !== 'undefined') {
         window._audioIdle = true;
-        AudioEngine.setActivity(0.08);
+        AudioEngine.setActivity(0.45); // gs.html : plus présent à l'arrêt (la musique continue d'évoluer)
       }
     }, 500);
 
@@ -2300,6 +2300,7 @@
       splatMode = on;
       if (particles) particles.visible = !on;
       sharpScenes.setVisible(on);
+      if (!on) { photoPlane.visible = false; photoW = 0; }
       camera.position.z = -minZoom - (-minZoom - (on ? GS_CAMERA_END : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
       else { lastAppliedDisparity = null; if (particles && !isTransitioning) loadImage(currentImageIndex); } // retour aux points : profondeur et couleurs à jour
@@ -2317,6 +2318,45 @@
     }
     // Test : fixer le niveau de zoom (0 = loin, 0.82 = profondeur max)
     function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - (splatMode ? GS_CAMERA_END : maxZoom)) * z; needsResizeRender = true; }
+    // === PHOTO 2D EXACTE AU DÉZOOM ===
+    // Au dézoom complet (et pendant la pause avant / juste après un changement de photo), on affiche la
+    // vraie photo, avec le même recadrage et les mêmes couleurs Floc'h que les points, sur un plan placé
+    // exactement là où SHARP la projette. Dès qu'on scrolle, elle laisse la place à SHARP.
+    const photoPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false }));
+    photoPlane.scale.set(2 * 0.587 * 25, 2 * 0.3003 * 25, 1);   // rectangle de la photo vu depuis l'œil de SHARP (z = 25)
+    photoPlane.visible = false;
+    sceneGroup.add(photoPlane);
+    const photoTextures = new Map();
+    function photoTexture(idx) {
+      if (photoTextures.has(idx)) return photoTextures.get(idx);
+      const img = imageCache.get(idx);
+      if (!img) return null;
+      const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const ctx = c.getContext('2d'), out = ctx.createImageData(img.width, img.height), d = img.data, o = out.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+        const col = colorFromLuminance(lum, idx);
+        o[i] = col[0] * 255; o[i + 1] = col[1] * 255; o[i + 2] = col[2] * 255; o[i + 3] = 255;
+      }
+      ctx.putImageData(out, 0, 0);
+      const tex = new THREE.CanvasTexture(c);
+      photoTextures.set(idx, tex);
+      return tex;
+    }
+    let photoW = 0;
+    function updatePhotoPlane() {
+      const flat = splatMode && zoomLevel < 0.06 && (sharpScenes.phase !== 'run');
+      const target = flat ? 1 - Math.min(1, zoomLevel / 0.06) : 0;
+      photoW += (target - photoW) * (target > photoW ? 0.12 : 0.35);  // apparition douce, départ rapide au scroll
+      if (photoW < 0.002) photoW = 0;
+      const tex = photoW > 0 ? photoTexture(sharpScenes.current) : null;
+      photoPlane.visible = !!tex && photoW > 0;
+      if (tex && photoPlane.material.map !== tex) { photoPlane.material.map = tex; photoPlane.material.needsUpdate = true; }
+      photoPlane.material.opacity = photoW;
+      return photoW;
+    }
+
     // Touche G : bascule Points <-> Gaussiennes SHARP, à tout moment
     window.addEventListener('keydown', (e) => {
       if (e.key === 'g' || e.key === 'G') setSplatMode(!splatMode);
@@ -4447,11 +4487,14 @@
         AudioEngine.ensureContextRunning();
       }
 
+      // Musique vivante même immobile : dérive lente et irrégulière des paramètres sonores
+      const _at = performance.now() / 1000;
+      const audioDrift = Math.sin(_at * 0.11) * 0.5 + Math.sin(_at * 0.047 + 1.3) * 0.5;
       AudioEngine.update({
-        zoomLevel,
+        zoomLevel: Math.max(0, zoomLevel + 0.04 * audioDrift),
         movement: particleParams.movement,
         disparity: currentAppliedDisparity,
-        scrollVelocity: audioScrollVelocity,
+        scrollVelocity: Math.max(audioScrollVelocity, 0.0015 * (1 + Math.sin(_at * 0.23))),
         scrollDirection: audioScrollDirection,
         isTransitioning,
         transitionProgress: window.lastTransitionProgress || 0
@@ -4495,8 +4538,10 @@
           isInDeadZone = false; scrollDeadZoneAccumulator = 0; // transition finie : le scroll reprend
         }
         gsWaitingTransition = sharpScenes.busy();
-        if (particleParams.movement > 0) sharpTime += 0.01; // même vitesse que les points
+        { const now = performance.now(); if (particleParams.movement > 0) sharpTime += Math.min(0.05, (now - (window._gsLastT || now)) * 0.0006); window._gsLastT = now; } // horloge réelle : pas de saccade
+        const photoWeight = updatePhotoPlane();
         sharpScenes.update({
+          photo: photoWeight,
           disparity: currentAppliedDisparity,
           movement: particleParams.movement,
           time: sharpTime,
