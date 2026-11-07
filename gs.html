@@ -4577,14 +4577,20 @@
         AudioEngine.ensureContextRunning();
       }
 
-      // Musique vivante même immobile : dérive lente et irrégulière des paramètres sonores
+      // Son : quand on scrolle, il suit le parcours ; quand on s'arrête, les couches liées au scroll et à la
+      // profondeur s'éteignent en douceur (1-2 s) et il ne reste que l'ambiance de l'état 0 (photo 2D),
+      // avec une très légère variation lente — plus de note tenue.
       const _at = performance.now() / 1000;
-      const audioDrift = Math.sin(_at * 0.11) * 0.5 + Math.sin(_at * 0.047 + 1.3) * 0.5;
+      if (Math.abs(zoomDelta) > 1e-4) window._audioScrollT = _at;
+      const scrolling = _at - (window._audioScrollT || -10) < 1.0;
+      window._audioActive = (window._audioActive || 0) + ((scrolling ? 1 : 0) - (window._audioActive || 0)) * (scrolling ? 0.08 : 0.02);
+      const aa = window._audioActive;
+      const ambientDrift = 0.015 * (Math.sin(_at * 0.11) * 0.5 + Math.sin(_at * 0.047 + 1.3) * 0.5);
       AudioEngine.update({
-        zoomLevel: Math.max(0, zoomLevel + 0.04 * audioDrift),
-        movement: particleParams.movement,
-        disparity: currentAppliedDisparity,
-        scrollVelocity: Math.max(audioScrollVelocity, 0.0015 * (1 + Math.sin(_at * 0.23))),
+        zoomLevel: Math.max(0, zoomLevel * aa + ambientDrift),
+        movement: particleParams.movement * aa,
+        disparity: currentAppliedDisparity * aa,
+        scrollVelocity: audioScrollVelocity,
         scrollDirection: audioScrollDirection,
         isTransitioning,
         transitionProgress: window.lastTransitionProgress || 0
