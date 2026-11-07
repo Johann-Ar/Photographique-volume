@@ -2311,10 +2311,12 @@
     }
     // Test : fixer le niveau de zoom (0 = loin, 0.82 = profondeur max)
     function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - maxZoom) * z; needsResizeRender = true; }
-    // Touche G : bascule Points <-> Gaussiennes SHARP (pas sur l'accueil)
+    // Touche G : bascule Points <-> Gaussiennes SHARP, à tout moment
     window.addEventListener('keydown', (e) => {
-      if ((e.key === 'g' || e.key === 'G') && !landingActive && !introActive) setSplatMode(!splatMode);
+      if (e.key === 'g' || e.key === 'G') setSplatMode(!splatMode);
     });
+    // gs.html?mode=gs : démarrer directement en gaussiennes SHARP
+    const startInGs = new URLSearchParams(location.search).get('mode') === 'gs';
     window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, isOn: () => splatMode }; // accès console pour les tests
 
     // Fonction de chargement d'image optimisée avec cache
@@ -2454,6 +2456,7 @@
         // Initialiser le temps pour l'animation
         particles.userData.time = 0;
         sceneGroup.add(particles);
+        if (startInGs && !splatMode && !window._gsStarted) { window._gsStarted = true; setSplatMode(true); }
         particles.visible = !splatMode;
         if (splatMode) sharpScenes.show(currentImageIndex);
 
