@@ -1727,7 +1727,9 @@
     // Scènes SHARP préparées par ml-sharp/volume2.py : base brute + couche molécules (on s'enfonce dans l'image)
     const sharpScenes = new SharpScenes(sceneGroup);
     let sharpTime = 0;
-    const GS_CAMERA_END = -15; // en mode SHARP la caméra va jusqu'à z = -15 : elle traverse le plan de la photo (z = 0)
+    const GS_CAMERA_END = -15; // en mode SHARP la caméra va au plus jusqu'à z = -15 : elle traverse le plan de la photo (z = 0)
+    // ... mais jamais dans la matière : limite propre à chaque photo (matière la plus proche au centre, avec marge)
+    const gsCamEnd = () => Math.max(GS_CAMERA_END, 25 - 25 * sharpScenes.cameraLimit(sharpScenes.current, (25 - GS_CAMERA_END) / 25));
     let splatMode = false;                      // false = points, true = gaussiennes
     let pointsDepthSign = 1;                    // 1 = sens d'origine des points, -1 = sens inversé (test)
     let pointsOcclusion = false;                // test : tampon de profondeur pour les points
@@ -2307,7 +2309,7 @@
       if (particles) particles.visible = !on;
       sharpScenes.setVisible(on);
       if (!on) { photoPlane.visible = false; photoW = 0; }
-      camera.position.z = -minZoom - (-minZoom - (on ? GS_CAMERA_END : maxZoom)) * zoomLevel;
+      camera.position.z = -minZoom - (-minZoom - (on ? gsCamEnd() : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
       else { lastAppliedDisparity = null; if (particles && !isTransitioning) loadImage(currentImageIndex); } // retour aux points : profondeur et couleurs à jour
       needsResizeRender = true;          // forcer un rendu
@@ -2323,7 +2325,7 @@
       needsResizeRender = true;
     }
     // Test : fixer le niveau de zoom (0 = loin, 0.82 = profondeur max)
-    function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - (splatMode ? GS_CAMERA_END : maxZoom)) * z; needsResizeRender = true; }
+    function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - (splatMode ? gsCamEnd() : maxZoom)) * z; needsResizeRender = true; }
     // === PHOTO 2D EXACTE AU DÉZOOM ===
     // Au dézoom complet (et pendant la pause avant / juste après un changement de photo), on affiche la
     // vraie photo, avec le même recadrage et les mêmes couleurs Floc'h que les points, sur un plan placé
@@ -4184,7 +4186,7 @@
         // Lerp fluide vers la position cible
         zoomLevel += (targetZoomLevel - zoomLevel) * scrollConfig.global.zoomLerp;
         // Déplacer la caméra (au lieu du sceneGroup) : de z=25 (loin) à z=0 (proche)
-        camera.position.z = -minZoom - (-minZoom - (splatMode ? GS_CAMERA_END : maxZoom)) * zoomLevel; // SHARP : on traverse la photo
+        camera.position.z = -minZoom - (-minZoom - (splatMode ? gsCamEnd() : maxZoom)) * zoomLevel; // SHARP : on traverse la photo
 
         // Info overlay time-fade: trigger at 1/4 of X on forward path, then fade by time
         if (zoomLevel <= 0.005) {

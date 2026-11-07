@@ -182,6 +182,21 @@ export class SharpScenes {
   busy() { return this.next != null; }
 
   // Profondeur (après compression) du plan où poser la photo 2D : 1 = plan proche
+  // Jusqu'où la caméra peut avancer (repère des fichiers, 0 = point de vue SHARP) sans entrer dans la matière :
+  // matière la plus proche dans la zone centrale de l'image (là où la caméra avance), moins une marge.
+  cameraLimit(i, max = 1.6, margin = 0.2) {
+    const g = this.depthGrid(i);
+    if (!g) return max;
+    let zmin = Infinity;
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      const u = -HALF_U + 2 * HALF_U * x / (GW - 1), v = -HALF_V + 2 * HALF_V * y / (GH - 1);
+      const zc = Math.pow(Math.max(g[y * GW + x], 0.05), sharp.depthGamma);
+      // seule la matière sur le trajet de la caméra compte : distance à l'axe (à sa profondeur) < 0,16 (≈ 4 unités)
+      if (Math.hypot(u, v) * zc > 0.16) continue;
+      zmin = Math.min(zmin, zc);
+    }
+    return Math.max(0.2, Math.min(max, zmin - margin));
+  }
   depthGrid(i) { const s = this.scenes.get(i); return s && s.depthGrid ? s.depthGrid : null; }
   photoDepth(i) { const s = this.scenes.get(i); return s && s.zMedian ? Math.pow(Math.max(1, s.zMedian), sharp.depthGamma) : 1; }
 
