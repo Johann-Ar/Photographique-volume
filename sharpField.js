@@ -13,8 +13,8 @@ export const sharp = {
   molSize: 1.0,     // TAILLE des molécules
   moveMul: 0.3,     // MOUVEMENT des cellules (1 = amplitude des points ; 0.3 = moins de dispersion au fond du scroll)
   showMol: true,    // matière cellulaire (ml-sharp/cells.py : chaque gaussienne décomposée en cellules)
-  cellFrom: 0.35,   // la matière cellulaire commence à remplacer le SHARP lisse à ce stade (0..1 du parcours)
-  cellTo: 0.9,      // ... et domine à partir d'ici (courbe exponentielle entre les deux)
+  cellFrom: 0.2,   // la matière cellulaire commence à remplacer le SHARP lisse à ce stade (0..1 du parcours)
+  cellTo: 0.75,     // ... et domine à partir d'ici (en plus, la matière proche de la caméra passe en cellules)
   cellMove: 0.4,    // mouvement des cellules (1 = même amplitude que les points)
   roundness: 0.95,  // CELLULES : arrondi atteint au fond du scroll (tout en cellules), 0 = gaussiennes SHARP d'origine
   progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
@@ -26,7 +26,7 @@ export const sharp = {
 // scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
 // Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
 const D = 25;
-const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0) };
+const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
@@ -64,6 +64,11 @@ const GLSL = (o, i) => `
   }
   // Cadre net : tout ce qui sort du rectangle de la photo (vu depuis le point de vue SHARP) est coupé,
   // après le mouvement ; les bords restent des lignes droites même quand on avance dans la scène.
+  // Cellules selon la proximité de la caméra (là où les gaussiennes deviennent grandes et floues à l'écran)
+  // combinées à l'avancement du parcours ; la base SHARP s'efface d'autant
+  float nr = clamp(1.0 - (${o.gsplat}.center.z - ${i.camz}) / 0.7, 0.0, 1.0);
+  float cw = max(${i.cellr}, nr * nr * (3.0 - 2.0 * nr));
+  ${o.gsplat}.rgba.a *= (${i.solid} > 0.5) ? cw : (1.0 - 0.85 * cw);
   // Couleurs : la page sort en linéaire (rendu r128 des points), et Spark applique alors srgbToLinear
   // (pow 2,2) à chaque gaussienne ; on compense pour retrouver exactement les couleurs de la photo.
   ${o.gsplat}.rgba.rgb = pow(max(${o.gsplat}.rgba.rgb, vec3(0.0)), vec3(1.0 / 2.2));
@@ -79,9 +84,9 @@ function makeLayer(url, isMol) {
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -174,8 +179,10 @@ export class SharpScenes {
     for (const [i, s] of this.scenes) {
       const fade = i === this.current ? this.fadeCur : i === this.next ? this.fadeNext : 0;
       for (const layer of [s.base, s.mol]) {
-        const op = (layer.isMol ? this.cellW : 1 - 0.85 * this.cellW) * (1 - this.photoW); // SHARP lisse -> cellules ; photo 2D par-dessus
-        const on = this.visible && fade > 0 && op > 0.001 && (!layer.isMol || sharp.showMol);
+        // le mélange SHARP lisse / cellules est fait par gaussienne (parcours + proximité caméra) dans le modificateur
+        const op = 1 - this.photoW;
+        const molNeeded = this.cellW > 0.001 || this.camObj > 0.25;
+        const on = this.visible && fade > 0 && op > 0.001 && (!layer.isMol || (sharp.showMol && molNeeded));
         layer.mesh.opacity = op;
         layer.mesh.visible = on;
         layer.u.fade.value = fade;
@@ -198,13 +205,16 @@ export class SharpScenes {
   }
 
   // À chaque image. disparity : 0..7 (états du parcours)
-  update({ disparity, movement, time, photo = 0 }) {
+  update({ disparity, movement, time, photo = 0, cameraZ = 25 }) {
     if (!this.visible) return;
     this.photoW = photo;
+    this.camObj = (D - cameraZ) / D;          // caméra dans le repère des fichiers (0 = point de vue SHARP)
+    shared.camZ.value = this.camObj;
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
     const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
-    this.cellW = x * x * x;   // exponentiel : les cellules arrivent tard puis vite
+    this.cellW = x * x;       // progressif
+    shared.cellR.value = this.cellW;
     this._tick();
     this._apply();
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
@@ -217,7 +227,7 @@ export class SharpScenes {
       s.mol.u.move.value = (movement * 2 * sharp.cellMove) / D;   // cellules : ton mouvement, à l'identique
       s.mol.u.size.value = sharp.molSize;
     }
-    const common = [shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize].join("|");
+    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize].join("|");
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? time.toFixed(4) : "0");   // le temps ne compte que si la couche bouge

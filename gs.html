@@ -4560,6 +4560,7 @@
         const photoWeight = updatePhotoPlane();
         sharpScenes.update({
           photo: photoWeight,
+          cameraZ: camera.position.z,
           disparity: currentAppliedDisparity,
           movement: particleParams.movement,
           time: sharpTime,
