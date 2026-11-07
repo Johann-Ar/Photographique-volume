@@ -12,7 +12,10 @@ export const sharp = {
   reliefMul: 1.0,   // RELIEF : part de la vraie profondeur SHARP atteinte au fond du scroll (0..1)
   molSize: 1.0,     // TAILLE des molécules
   moveMul: 0.3,     // MOUVEMENT des cellules (1 = amplitude des points ; 0.3 = moins de dispersion au fond du scroll)
-  showMol: false,   // ancienne couche molécules séparée (désactivée : une seule matière)
+  showMol: true,    // matière cellulaire (ml-sharp/cells.py : chaque gaussienne décomposée en cellules)
+  cellFrom: 0.2,    // la matière cellulaire commence à remplacer le SHARP lisse à ce stade (0..1 du parcours)
+  cellTo: 0.6,      // ... et domine à partir d'ici
+  cellMove: 1.0,    // mouvement des cellules (1 = même amplitude que les points)
   roundness: 0.95,  // CELLULES : arrondi atteint au fond du scroll (tout en cellules), 0 = gaussiennes SHARP d'origine
   progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
   depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
@@ -102,6 +105,7 @@ export class SharpScenes {
     this.fadeCur = 1;
     this.fadeNext = 0;
     this.visible = false;
+    this.cellW = 0;
     this.last = "";
   }
 
@@ -129,21 +133,34 @@ export class SharpScenes {
   busy() { return this.next != null; }
 
   // Image affichée tout de suite (chargement, flèches, retour aux gaussiennes)
-  show(i) { this.current = i; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._get(i); this._apply(); }
+  show(i) { this.current = i; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(); this._apply(); }
 
   // Lancer le changement de photo (automatique, chronométré)
   startTransition(i) {
     if (i === this.current || this.next != null) return;
-    this.next = i; this._get(i); this.t0 = performance.now();
+    this.next = i; this._keep(); this.t0 = performance.now();
   }
 
-  setVisible(v) { this.visible = v; if (v) this.loadAll(); this._apply(); }
+  setVisible(v) { this.visible = v; this._keep(); this._apply(); }
+
+  // Mémoire : seulement la photo affichée et la suivante (environ 2,3 millions de gaussiennes chacune)
+  _keep() {
+    if (!this.visible || this.current == null) return;
+    const keep = new Set([this.current, this.next ?? (this.current % this.count) + 1]);
+    for (const i of keep) this._get(i);
+    for (const [i, s] of this.scenes) if (!keep.has(i)) {
+      for (const l of [s.base, s.mol]) { this.parent.remove(l.mesh); l.mesh.dispose(); }
+      this.scenes.delete(i);
+    }
+  }
 
   _apply() {
     for (const [i, s] of this.scenes) {
       const fade = i === this.current ? this.fadeCur : i === this.next ? this.fadeNext : 0;
       for (const layer of [s.base, s.mol]) {
-        const on = this.visible && fade > 0 && (!layer.isMol || sharp.showMol);
+        const op = layer.isMol ? this.cellW : 1 - 0.85 * this.cellW;   // SHARP lisse -> matière cellulaire
+        const on = this.visible && fade > 0 && op > 0.001 && (!layer.isMol || sharp.showMol);
+        layer.mesh.opacity = op;
         layer.mesh.visible = on;
         layer.u.fade.value = fade;
         layer.u.inn.value = i === this.next ? 1 : 0;   // photo qui apparaît
@@ -160,7 +177,7 @@ export class SharpScenes {
     else if (e < T.wait + T.out) { this.fadeCur = 1 - (e - T.wait) / T.out; this.fadeNext = 0; }
     else if (e < T.wait + T.out + T.black || !ready) { this.fadeCur = 0; this.fadeNext = 0; }   // noir (et on attend la scène si besoin)
     else if (e < T.wait + T.out + T.black + T.in) { this.fadeCur = 0; this.fadeNext = (e - T.wait - T.out - T.black) / T.in; }
-    else { this.current = this.next; this.next = null; this.fadeCur = 1; this.fadeNext = 0; }
+    else { this.current = this.next; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(); }
   }
 
   // À chaque image. disparity : 0..7 (états du parcours)
@@ -168,6 +185,8 @@ export class SharpScenes {
     if (!this.visible) return;
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
+    const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
+    this.cellW = x * x * (3 - 2 * x);
     this._tick();
     this._apply();
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
@@ -176,10 +195,11 @@ export class SharpScenes {
     sharp.progress = p;
     shared.gamma.value = sharp.depthGamma;
     for (const [, s] of this.scenes) {
-      for (const l of [s.base, s.mol]) l.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D; // même amplitude que les points
+      s.base.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D;
+      s.mol.u.move.value = (movement * 2 * sharp.cellMove) / D;   // cellules : ton mouvement, à l'identique
       s.mol.u.size.value = sharp.molSize;
     }
-    const key = [shared.round.value.toFixed(3), sharp.depthGamma, time, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
+    const key = [this.cellW.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, time, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
     if (key !== this.last) {
       this.last = key;
       for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {

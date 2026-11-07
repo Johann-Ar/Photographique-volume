@@ -4495,7 +4495,7 @@
           isInDeadZone = false; scrollDeadZoneAccumulator = 0; // transition finie : le scroll reprend
         }
         gsWaitingTransition = sharpScenes.busy();
-        if (particleParams.movement > 0) sharpTime += 0.005; // mouvement plus lent que les points
+        if (particleParams.movement > 0) sharpTime += 0.01; // même vitesse que les points
         sharpScenes.update({
           disparity: currentAppliedDisparity,
           movement: particleParams.movement,
