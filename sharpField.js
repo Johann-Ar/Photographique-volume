@@ -74,6 +74,9 @@ const GLSL = (o, i) => `
   ${o.gsplat}.rgba.rgb = pow(max(${o.gsplat}.rgba.rgb, vec3(0.0)), vec3(1.0 / 2.2));
   vec2 uv = ${o.gsplat}.center.xy / max(${o.gsplat}.center.z, 0.05);
   if (abs(uv.x) > 0.587 || abs(uv.y) > 0.300) ${o.gsplat}.rgba.a = 0.0;
+  // ... et une gaussienne proche du bord est réduite pour que son halo (2 écarts-types) reste dans le cadre
+  float edge = min(0.587 - abs(uv.x), 0.300 - abs(uv.y)) * max(${o.gsplat}.center.z, 0.05);
+  ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(max(edge, 0.0) * 0.5));
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
@@ -228,7 +231,7 @@ export class SharpScenes {
       for (const layer of [s.base, s.mol]) {
         // le mélange SHARP lisse / cellules est fait par gaussienne (parcours + proximité caméra) dans le modificateur
         const op = 1 - this.photoW;
-        const molNeeded = this.cellW > 0.001 || this.camObj > 0.25;
+        const molNeeded = this.camObj > 0.2 || this.cellW > 0;   // préparées juste avant d'être utiles (proximité dès ~0,3)
         const on = this.visible && fade > 0 && op > 0.001 && (!layer.isMol || (sharp.showMol && molNeeded));
         layer.mesh.opacity = op;
         layer.mesh.visible = on;
@@ -258,12 +261,12 @@ export class SharpScenes {
     let changed = this.busy();
     this.photoW = photo;
     this.camObj = (D - cameraZ) / D;          // caméra dans le repère des fichiers (0 = point de vue SHARP)
-    shared.camZ.value = this.camObj;
+    shared.camZ.value = Math.round(this.camObj * 100) / 100;   // pas de 0,25 unité : invisible, mais moins de recalculs
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
     const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
     this.cellW = x * x;       // progressif
-    shared.cellR.value = this.cellW;
+    shared.cellR.value = Math.round(this.cellW * 100) / 100;
     this._tick();
     this._apply();
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
@@ -279,7 +282,7 @@ export class SharpScenes {
     const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize].join("|");
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
-      const key = common + "|" + (l.u.move.value > 0 ? time.toFixed(4) : "0");   // le temps ne compte que si la couche bouge
+      const key = common + "|" + (l.u.move.value > 0 ? Math.floor(performance.now() / 33) : "0");   // mouvement : 30 recalculs / s au plus
       if (key !== l.lastKey) { l.lastKey = key; l.mesh.updateVersion(); changed = true; }
     }
     const vis = [...this.scenes.values()].map((s) => +s.base.mesh.visible + 2 * s.mol.mesh.visible + (s.base.mesh.isInitialized ? 4 : 0)).join('');

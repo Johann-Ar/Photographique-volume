@@ -1682,9 +1682,9 @@
     let renderer;
     try {
       renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: false,   // recommandation Spark : l'anticrénelage n'apporte rien aux gaussiennes et coûte cher
         alpha: false,
-        preserveDrawingBuffer: true,
+        preserveDrawingBuffer: location.search.includes('capture'), // seulement pour les captures de test
         powerPreference: "high-performance"
       });
       // Mobile: utiliser le pixelRatio natif (cap à 3 pour éviter excès sur certains écrans)
@@ -4595,7 +4595,7 @@
         // quand les cellules prennent le relais : disques à centre plein et bord doux (falloff bas, coupure à 1,8 écart-type)
         const cw = sharpScenes.cellW;
         spark.falloff = 1 - 0.8 * cw;
-        spark.maxStdDev = Math.sqrt(8) - (Math.sqrt(8) - 1.8) * cw;
+        spark.maxStdDev = 2.5 - (2.5 - 1.8) * cw;   // 2,5 écarts-types (au-delà : < 5 % d'opacité), moins de pixels à dessiner
         // Rendu à la demande : seulement si quelque chose change (caméra, scène, transition), puis ~0,5 s
         // de plus pour laisser Spark finir son tri en arrière-plan. Rien ne bouge -> rien n'est redessiné.
         const e = camera.matrixWorld.elements, sig = e[12] + ',' + e[13] + ',' + e[14] + ',' + e[8] + ',' + e[9] + ',' + e[10];
