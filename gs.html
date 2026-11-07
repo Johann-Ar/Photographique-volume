@@ -2346,8 +2346,8 @@
     }
     let photoW = 0;
     function updatePhotoPlane() {
-      // fondu long et doux : la photo s'efface progressivement sur les premiers 18 % du zoom
-      const PHOTO_FADE = 0.18;
+      // fondu court : les couleurs étant alignées, la photo et SHARP se superposent exactement au point de vue
+      const PHOTO_FADE = 0.02;   // court : fini avant que la caméra bouge (sinon la perspective dédouble l'image)
       const flat = splatMode && zoomLevel < PHOTO_FADE && (sharpScenes.phase !== 'run');
       const k = Math.min(1, zoomLevel / PHOTO_FADE);
       const target = flat ? 1 - k * k * (3 - 2 * k) : 0;
@@ -4551,8 +4551,10 @@
           time: sharpTime,
         });
         // bord des cellules : flou doux au départ (gaussienne), plus défini au fond du scroll
-        spark.falloff = 1 - 0.5 * sharp.progress;
-        spark.maxStdDev = Math.sqrt(8) - (Math.sqrt(8) - 2.2) * sharp.progress;
+        // quand les cellules prennent le relais : disques à centre plein et bord doux (falloff bas, coupure à 1,8 écart-type)
+        const cw = sharpScenes.cellW;
+        spark.falloff = 1 - 0.8 * cw;
+        spark.maxStdDev = Math.sqrt(8) - (Math.sqrt(8) - 1.8) * cw;
         needsRender = true; // Spark trie les gaussiennes en arrière-plan : rendre chaque image
       }
 

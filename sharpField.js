@@ -13,9 +13,9 @@ export const sharp = {
   molSize: 1.0,     // TAILLE des molécules
   moveMul: 0.3,     // MOUVEMENT des cellules (1 = amplitude des points ; 0.3 = moins de dispersion au fond du scroll)
   showMol: true,    // matière cellulaire (ml-sharp/cells.py : chaque gaussienne décomposée en cellules)
-  cellFrom: 0.2,    // la matière cellulaire commence à remplacer le SHARP lisse à ce stade (0..1 du parcours)
-  cellTo: 0.6,      // ... et domine à partir d'ici
-  cellMove: 0.6,    // mouvement des cellules (1 = même amplitude que les points)
+  cellFrom: 0.35,   // la matière cellulaire commence à remplacer le SHARP lisse à ce stade (0..1 du parcours)
+  cellTo: 0.9,      // ... et domine à partir d'ici (courbe exponentielle entre les deux)
+  cellMove: 0.4,    // mouvement des cellules (1 = même amplitude que les points)
   roundness: 0.95,  // CELLULES : arrondi atteint au fond du scroll (tout en cellules), 0 = gaussiennes SHARP d'origine
   progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
   depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
@@ -70,16 +70,16 @@ const GLSL = (o, i) => `
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
-  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0) };
+  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0), solid: dyno.dynoFloat(isMol ? 1 : 0) };
   const mesh = new SplatMesh({ url });
   mesh.quaternion.set(1, 0, 0, 0);            // OpenCV -> three.js (y et z retournés)
   mesh.position.set(0, 0, D);
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -189,7 +189,7 @@ export class SharpScenes {
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
     const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
-    this.cellW = x * x * (3 - 2 * x);
+    this.cellW = x * x * x;   // exponentiel : les cellules arrivent tard puis vite
     this._tick();
     this._apply();
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
