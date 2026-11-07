@@ -1753,7 +1753,9 @@
     // Zone morte au retour à État 1: scroll l'équivalent de 0.100 avant que le zoom reprenne
     let scrollDeadZoneAccumulator = 0; // Accumule le scroll en zone morte
     const SCROLL_DEAD_ZONE_DISTANCE = 0.100; // Distance à scroller avant de re-zoomer
-    let isInDeadZone = false; // Flag pour savoir si on est dans la zone morte
+    let isInDeadZone = false;
+    // En mode SHARP la zone d'arrêt (retour à la photo plate) sert au changement de photo : plus longue
+    const deadZoneDistance = () => (splatMode ? 0.35 : SCROLL_DEAD_ZONE_DISTANCE); // Flag pour savoir si on est dans la zone morte
 
     // Système de cycle de scroll bidirectionnel avec inversion automatique
     const MAX_ZOOM_LEVEL = 0.826632; // Point de zoom max (début transition image)
@@ -2298,7 +2300,7 @@
       sharpScenes.setVisible(on);
       camera.position.z = -minZoom - (-minZoom - (on ? GS_CAMERA_END : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
-      else lastAppliedDisparity = null; // les points recalculent leur profondeur au retour
+      else { lastAppliedDisparity = null; if (particles && !isTransitioning) loadImage(currentImageIndex); } // retour aux points : profondeur et couleurs à jour
       needsResizeRender = true;          // forcer un rendu
     }
     function setPointsDepth(sign, occlusion) {
@@ -4165,7 +4167,7 @@
         const colors = colorAttr.array;
         const numColors = Math.min(oldColors.length, newColors.length, colors.length);
 
-        for (let i = 0; i < numColors; i++) {
+        if (!splatMode) for (let i = 0; i < numColors; i++) { // points cachés en mode SHARP : rien à calculer
           colors[i] = oldColors[i] + (newColors[i] - oldColors[i]) * transitionProgress;
         }
 
@@ -4173,7 +4175,7 @@
         needsRender = true;
 
         // Interpoler les depths en parallèle des couleurs (toujours, pas seulement si disparity actif)
-        if (oldDepths && newDepths) {
+        if (oldDepths && newDepths && !splatMode) {
           const depthArray = particles.geometry.attributes.normalizedDepth.array;
           const numDepths = Math.min(oldDepths.length, newDepths.length, depthArray.length);
           for (let i = 0; i < numDepths; i++) {
@@ -4485,13 +4487,16 @@
 
       // GAUSSIENNES (SHARP) : relief = disparité du scroll, mêmes mouvements que les points
       if (splatMode) {
-        if (isTransitioning && sharpScenes.current !== currentImageIndex) sharpScenes.crossTo(currentImageIndex);
+        // Aller-retour dans le même volume : la photo change seulement au retour à plat (zone d'arrêt)
+        if (isInDeadZone && sharpScenes.current !== currentImageIndex && sharpScenes.previous == null) sharpScenes.crossTo(currentImageIndex);
+        if (!isInDeadZone && sharpScenes.previous == null && sharpScenes.current !== currentImageIndex && zoomLevel < 0.002 && scrollPhase === 'zoomIn') sharpScenes.show(currentImageIndex);
+        const gsMix = sharpScenes.previous != null ? (isInDeadZone ? scrollDeadZoneAccumulator / deadZoneDistance() : 1) : 1;
         if (particleParams.movement > 0) sharpTime += 0.01;
         sharpScenes.update({
           disparity: currentAppliedDisparity,
           movement: particleParams.movement,
           time: sharpTime,
-          mix: isTransitioning ? (window.lastTransitionProgress || 0) : 1,
+          mix: gsMix,
         });
         needsRender = true; // Spark trie les gaussiennes en arrière-plan : rendre chaque image
       }
@@ -5021,7 +5026,7 @@
 
         if (isInDeadZone) {
           scrollDeadZoneAccumulator += scrollDelta;
-          if (scrollDeadZoneAccumulator >= SCROLL_DEAD_ZONE_DISTANCE) {
+          if (scrollDeadZoneAccumulator >= deadZoneDistance()) {
             isInDeadZone = false;
             scrollDeadZoneAccumulator = 0;
           }
@@ -5033,7 +5038,7 @@
         if (isInDeadZone) {
           const wheelDelta = absDeltaY * scrollConfig.trackpad.sensitivity * scrollConfig.wheel.multiplier;
           scrollDeadZoneAccumulator += wheelDelta;
-          if (scrollDeadZoneAccumulator >= SCROLL_DEAD_ZONE_DISTANCE) {
+          if (scrollDeadZoneAccumulator >= deadZoneDistance()) {
             isInDeadZone = false;
             scrollDeadZoneAccumulator = 0;
           }

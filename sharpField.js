@@ -22,7 +22,8 @@ const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0) };
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
   float z = max(${i.gsplat}.center.z, 0.05);
-  float zt = 1.0 + (z - 1.0) * ${i.t};
+  // + 0.002 log(z) : écart minuscule qui garde l'ordre de profondeur à plat (sinon 800 000 gaussiennes sur un même plan = tri instable, flou)
+  float zt = 1.0 + (z - 1.0) * ${i.t} + 0.002 * log(z);
   float spread = 1.0 + (zt - 1.0) * ${i.t};
   ${o.gsplat}.center = vec3(${i.gsplat}.center.xy / z * spread, zt);
   ${o.gsplat}.scales *= spread / z * ${i.size};
