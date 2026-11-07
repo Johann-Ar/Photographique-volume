@@ -4,7 +4,8 @@
 //   Ressources/sharp/IMG_00X_mol.spz  : couche « molécules » (petites sphères) posée sur la base
 // Repère des fichiers : SHARP (x droite, y bas, z devant) avec le plan de la photo à z = 1.
 // Sur la carte graphique (dyno de Spark) : taille des molécules, mouvements (comme les points),
-// fondu grain par grain entre deux photos. La géométrie reste celle de SHARP (pas d'aplatissement).
+// changement de photo : chaque gaussienne, à son tour, se resserre en petite cellule, dérive
+// doucement vers le haut et s'efface (l'apparition fait l'inverse). La géométrie reste celle de SHARP (pas d'aplatissement).
 import { SplatMesh, dyno } from "@sparkjsdev/spark";
 
 export const sharp = {
@@ -27,8 +28,16 @@ const GLSL = (o, i) => `
   float ph = float(${i.gsplat}.index) * 0.3;
   ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * z;
   ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
-  float h = fract(sin(float(${i.gsplat}.index) * 12.9898) * 43758.5453);
-  if (h > ${i.fade}) ${o.gsplat}.rgba.a = 0.0;
+  float fi = float(${i.gsplat}.index);
+  float h = fract(sin(fi * 12.9898) * 43758.5453);
+  float d = 1.0 - clamp((${i.fade} - h * 0.6) / 0.4, 0.0, 1.0);
+  if (d > 0.0) {
+    vec3 dir = normalize(vec3(h, fract(sin(fi * 78.233) * 12543.1), fract(sin(fi * 39.425) * 24634.6)) * 2.0 - 1.0 + 1e-4);
+    ${o.gsplat}.center += dir * d * 0.035 * z;
+    ${o.gsplat}.center.y -= d * d * 0.025 * z;
+    ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0007 * z), smoothstep(0.0, 0.35, d)) * (1.0 - 0.4 * d);
+    ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.45, 1.0, d);
+  }
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
@@ -106,6 +115,7 @@ export class SharpScenes {
   // À chaque image. disparity : 0..7 (états du parcours) ; mix : avancement de la transition (0..1)
   update({ disparity, movement, time, mix = 1 }) {
     if (!this.visible) return;
+    if (this.forceMix != null) mix = this.forceMix; // test : figer l'avancement du changement de photo
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
     if (this.previous != null) {
