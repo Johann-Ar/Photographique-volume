@@ -13,7 +13,8 @@ export const sharp = {
   molSize: 1.0,     // TAILLE des molécules
   moveMul: 0.3,     // MOUVEMENT des cellules (1 = amplitude des points ; 0.3 = moins de dispersion au fond du scroll)
   showMol: false,   // ancienne couche molécules séparée (désactivée : une seule matière)
-  roundness: 0.5,   // CELLULES : arrondi maximal (atteint au fond du scroll), 0 = gaussiennes SHARP d'origine
+  roundness: 0.95,  // CELLULES : arrondi atteint au fond du scroll (tout en cellules), 0 = gaussiennes SHARP d'origine
+  progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
   depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
   curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
 };
@@ -42,7 +43,7 @@ const GLSL = (o, i) => `
   float g = pow(max(${i.gsplat}.scales.x * ${i.gsplat}.scales.y * ${i.gsplat}.scales.z, 1e-30), 1.0 / 3.0);
   ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0), ${i.rnd}) * ${i.size};
   // au fond du scroll : taille plafonnée (≈ 1,6 pixel de la photo) -> plein de petites cellules nettes au lieu du flou
-  float cap = mix(1000.0, 1.6 * z / 1288.0, ${i.prog});
+  float cap = mix(1000.0, 2.2 * z / 1288.0, ${i.prog});
   ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(cap));
   float ph = fi * 0.3;
   ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * z;
@@ -172,6 +173,7 @@ export class SharpScenes {
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
     shared.round.value = sharp.roundness * p;
     shared.prog.value = p;
+    sharp.progress = p;
     shared.gamma.value = sharp.depthGamma;
     for (const [, s] of this.scenes) {
       for (const l of [s.base, s.mol]) l.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D; // même amplitude que les points

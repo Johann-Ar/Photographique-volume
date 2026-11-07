@@ -4495,12 +4495,15 @@
           isInDeadZone = false; scrollDeadZoneAccumulator = 0; // transition finie : le scroll reprend
         }
         gsWaitingTransition = sharpScenes.busy();
-        if (particleParams.movement > 0) sharpTime += 0.01;
+        if (particleParams.movement > 0) sharpTime += 0.005; // mouvement plus lent que les points
         sharpScenes.update({
           disparity: currentAppliedDisparity,
           movement: particleParams.movement,
           time: sharpTime,
         });
+        // bord des cellules : flou doux au départ (gaussienne), plus défini au fond du scroll
+        spark.falloff = 1 - 0.5 * sharp.progress;
+        spark.maxStdDev = Math.sqrt(8) - (Math.sqrt(8) - 2.2) * sharp.progress;
         needsRender = true; // Spark trie les gaussiennes en arrière-plan : rendre chaque image
       }
 
