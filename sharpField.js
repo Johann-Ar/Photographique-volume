@@ -22,7 +22,7 @@ export const sharp = {
 // scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
 // Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
 const D = 25;
-const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6) };
+const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
@@ -41,30 +41,42 @@ const GLSL = (o, i) => `
   // cellules : la gaussienne s'arrondit en partie, sans changer de volume
   float g = pow(max(${i.gsplat}.scales.x * ${i.gsplat}.scales.y * ${i.gsplat}.scales.z, 1e-30), 1.0 / 3.0);
   ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0), ${i.rnd}) * ${i.size};
+  // au fond du scroll : taille plafonnée (≈ 1,6 pixel de la photo) -> plein de petites cellules nettes au lieu du flou
+  float cap = mix(1000.0, 1.6 * z / 1288.0, ${i.prog});
+  ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(cap));
   float ph = fi * 0.3;
   ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * z;
   ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
-  float d = 1.0 - clamp((${i.fade} - h * 0.6) / 0.4, 0.0, 1.0);
+  // Changement de photo. Disparition : chaque cellule se resserre, dérive doucement et s'efface.
+  // Apparition : sur place, du centre de l'image vers les bords, chaque cellule grandit à sa position.
+  float r = clamp(length(vec2(${o.gsplat}.center.x / z / 0.59, ${o.gsplat}.center.y / z / 0.30)) / 1.42, 0.0, 1.0);
+  float stag = mix(h, r * 0.8 + h * 0.2, ${i.inn});
+  float d = 1.0 - clamp((${i.fade} - stag * 0.6) / 0.4, 0.0, 1.0);
   if (d > 0.0) {
-    vec3 dir = normalize(vec3(h, h2, h3) * 2.0 - 1.0 + 1e-4);
-    ${o.gsplat}.center += dir * d * 0.035 * z;
-    ${o.gsplat}.center.y -= d * d * 0.025 * z;
-    ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0007 * z), smoothstep(0.0, 0.35, d)) * (1.0 - 0.4 * d);
-    ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.45, 1.0, d);
+    if (${i.inn} < 0.5) {
+      vec3 dir = normalize(vec3(h, h2, h3) * 2.0 - 1.0 + 1e-4);
+      ${o.gsplat}.center += dir * d * 0.035 * z;
+      ${o.gsplat}.center.y -= d * d * 0.025 * z;
+      ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0007 * z), smoothstep(0.0, 0.35, d)) * (1.0 - 0.4 * d);
+      ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.45, 1.0, d);
+    } else {
+      ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0006 * z), smoothstep(0.0, 0.5, d)) * (1.0 - 0.7 * d);
+      ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.3, 1.0, d);
+    }
   }
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
-  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1) };
+  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0) };
   const mesh = new SplatMesh({ url });
   mesh.quaternion.set(1, 0, 0, 0);            // OpenCV -> three.js (y et z retournés)
   mesh.position.set(0, 0, D);
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -133,6 +145,7 @@ export class SharpScenes {
         const on = this.visible && fade > 0 && (!layer.isMol || sharp.showMol);
         layer.mesh.visible = on;
         layer.u.fade.value = fade;
+        layer.u.inn.value = i === this.next ? 1 : 0;   // photo qui apparaît
       }
     }
   }
@@ -158,6 +171,7 @@ export class SharpScenes {
     this._apply();
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
     shared.round.value = sharp.roundness * p;
+    shared.prog.value = p;
     shared.gamma.value = sharp.depthGamma;
     for (const [, s] of this.scenes) {
       for (const l of [s.base, s.mol]) l.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D; // même amplitude que les points
