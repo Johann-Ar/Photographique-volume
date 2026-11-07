@@ -3,10 +3,8 @@
 //   Ressources/sharp/IMG_00X_base.spz : gaussiennes SHARP brutes, coupées au rectangle, teinte Floc'h
 //   Ressources/sharp/IMG_00X_mol.spz  : couche « molécules » (petites sphères) posée sur la base
 // Repère des fichiers : SHARP (x droite, y bas, z devant) avec le plan de la photo à z = 1.
-// Sur la carte graphique (dyno de Spark), avec t = avancement du relief (0..1) :
-//   profondeur  zt = 1 + (z - 1) t           (t = 0 : tout sur le plan z = 1 = photo plate et nette)
-//   étalement   spread = 1 + (zt - 1) t      (début : poussée droit vers l'arrière, comme les points ;
-//                                             fin (t = 1) : vraie géométrie SHARP, vue depuis son point de vue)
+// Sur la carte graphique (dyno de Spark) : taille des molécules, mouvements (comme les points),
+// fondu grain par grain entre deux photos. La géométrie reste celle de SHARP (pas d'aplatissement).
 import { SplatMesh, dyno } from "@sparkjsdev/spark";
 
 export const sharp = {
@@ -16,20 +14,19 @@ export const sharp = {
   showMol: true,    // afficher la couche molécules
 };
 
-const D = 29.3;     // le plan z = 1 devient le rectangle des points (34,4 unités de large) à z = 0
+// L'œil de SHARP est placé exactement au départ de la caméra du site (z = 25) : vue de là, la vraie
+// scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
+// Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
+const D = 25;
 const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
   float z = max(${i.gsplat}.center.z, 0.05);
-  // + 0.002 log(z) : écart minuscule qui garde l'ordre de profondeur à plat (sinon 800 000 gaussiennes sur un même plan = tri instable, flou)
-  float zt = 1.0 + (z - 1.0) * ${i.t} + 0.002 * log(z);
-  float spread = 1.0 + (zt - 1.0) * ${i.t};
-  ${o.gsplat}.center = vec3(${i.gsplat}.center.xy / z * spread, zt);
-  ${o.gsplat}.scales *= spread / z * ${i.size};
+  ${o.gsplat}.scales *= ${i.size};
   float ph = float(${i.gsplat}.index) * 0.3;
-  ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * spread;
-  ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * spread;
+  ${o.gsplat}.center.x += sin(${i.time} + ph) * ${i.move} * z;
+  ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
   float h = fract(sin(float(${i.gsplat}.index) * 12.9898) * 43758.5453);
   if (h > ${i.fade}) ${o.gsplat}.rgba.a = 0.0;
 `.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -120,7 +117,7 @@ export class SharpScenes {
       s.mol.u.move.value = (movement * 2 * sharp.moveMul) / D;   // même amplitude que les points
       s.mol.u.size.value = sharp.molSize;
     }
-    const key = [shared.t.value.toFixed(4), time, this.mix.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
+    const key = [time, this.mix.toFixed(3), sharp.molSize, sharp.moveMul, sharp.showMol].join("|");
     if (key !== this.last) {
       this.last = key;
       for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
