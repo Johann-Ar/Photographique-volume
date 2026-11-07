@@ -54,10 +54,10 @@ const GLSL = (o, i) => `
   ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
   // Changement de photo, sur place : apparition du centre vers les bords (chaque cellule grandit à sa
   // position) ; la disparition est la même animation jouée à l'envers (des bords vers le centre).
-  // ordre strict : distance au centre de l'image vue depuis le point de vue (cercle à l'écran), presque sans hasard
-  float r = clamp(length(${o.gsplat}.center.xy / max(${o.gsplat}.center.z, 0.05)) / 0.66, 0.0, 1.0);
-  float stag = r * 0.96 + h * 0.04;
-  float d = 1.0 - clamp((${i.fade} - stag * 0.78) / 0.22, 0.0, 1.0);
+  // même effet qu'avant (ellipse du cadre, montée douce) ; hasard réduit à 8 % pour que les bords ne devancent plus le centre
+  float r = clamp(length(vec2(${o.gsplat}.center.x / z / 0.59, ${o.gsplat}.center.y / z / 0.30)) / 1.42, 0.0, 1.0);
+  float stag = r * 0.92 + h * 0.08;
+  float d = 1.0 - clamp((${i.fade} - stag * 0.6) / 0.4, 0.0, 1.0);
   if (d > 0.0) {
     ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0006 * z), smoothstep(0.0, 0.5, d)) * (1.0 - 0.7 * d);
     ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.3, 1.0, d);
