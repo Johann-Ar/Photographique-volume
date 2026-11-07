@@ -6,7 +6,7 @@
 // Sur la carte graphique (dyno de Spark) : taille des molécules, mouvements (comme les points),
 // changement de photo : chaque gaussienne, à son tour, se resserre en petite cellule, dérive
 // doucement vers le haut et s'efface (l'apparition fait l'inverse). La géométrie reste celle de SHARP (pas d'aplatissement).
-import { SplatMesh, dyno } from "@sparkjsdev/spark";
+import { SplatMesh, dyno, unpackSplat } from "@sparkjsdev/spark";
 
 export const sharp = {
   reliefMul: 1.0,   // RELIEF : part de la vraie profondeur SHARP atteinte au fond du scroll (0..1)
@@ -54,9 +54,10 @@ const GLSL = (o, i) => `
   ${o.gsplat}.center.y += cos(${i.time} + ph * 1.3) * ${i.move} * z;
   // Changement de photo, sur place : apparition du centre vers les bords (chaque cellule grandit à sa
   // position) ; la disparition est la même animation jouée à l'envers (des bords vers le centre).
-  float r = clamp(length(vec2(${o.gsplat}.center.x / z / 0.59, ${o.gsplat}.center.y / z / 0.30)) / 1.42, 0.0, 1.0);
-  float stag = r * 0.8 + h * 0.2;
-  float d = 1.0 - clamp((${i.fade} - stag * 0.6) / 0.4, 0.0, 1.0);
+  // ordre strict : distance au centre de l'image vue depuis le point de vue (cercle à l'écran), presque sans hasard
+  float r = clamp(length(${o.gsplat}.center.xy / max(${o.gsplat}.center.z, 0.05)) / 0.66, 0.0, 1.0);
+  float stag = r * 0.96 + h * 0.04;
+  float d = 1.0 - clamp((${i.fade} - stag * 0.78) / 0.22, 0.0, 1.0);
   if (d > 0.0) {
     ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(0.0006 * z), smoothstep(0.0, 0.5, d)) * (1.0 - 0.7 * d);
     ${o.gsplat}.rgba.a *= 1.0 - smoothstep(0.3, 1.0, d);
@@ -125,6 +126,16 @@ export class SharpScenes {
       };
       this.parent.add(s.base.mesh, s.mol.mesh);
       this.scenes.set(i, s);
+      // profondeur médiane de la scène (échantillon), pour placer la photo 2D au bon plan
+      s.base.mesh.initialized.then((m) => {
+        const ps = m.packedSplats, n = ps.numSplats, zs = [];
+        for (let k = 0; k < n; k += 37) {
+          const u = unpackSplat(ps.packedArray, k, ps.splatEncoding);
+          if (u.opacity > 0.3) zs.push(u.center.z);
+        }
+        zs.sort((a, b) => a - b);
+        s.zMedian = zs.length ? zs[zs.length >> 1] : 1;
+      });
     }
     return s;
   }
@@ -133,6 +144,9 @@ export class SharpScenes {
 
   // Une transition est en cours (le scroll doit attendre)
   busy() { return this.next != null; }
+
+  // Profondeur (après compression) du plan où poser la photo 2D : 1 = plan proche
+  photoDepth(i) { const s = this.scenes.get(i); return s && s.zMedian ? Math.pow(Math.max(1, s.zMedian), sharp.depthGamma) : 1; }
 
   // Image affichée tout de suite (chargement, flèches, retour aux gaussiennes)
   show(i) { this.current = i; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(); this._apply(); }

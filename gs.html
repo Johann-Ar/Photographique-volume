@@ -2360,6 +2360,10 @@
       photoPlane.visible = !!tex && photoW > 0;
       if (tex && photoPlane.material.map !== tex) { photoPlane.material.map = tex; photoPlane.material.needsUpdate = true; }
       photoPlane.material.opacity = photoW;
+      // posée à la profondeur médiane de la scène : pendant le fondu, elle grossit au même rythme que SHARP
+      const zm = sharpScenes.photoDepth(sharpScenes.current);
+      photoPlane.position.z = 25 - 25 * zm;
+      photoPlane.scale.set(2 * 0.587 * 25 * zm, 2 * 0.3003 * 25 * zm, 1);
       return photoW;
     }
 
@@ -2851,6 +2855,8 @@
       if (landingPage && !landingPage.classList.contains('ready')) {
         landingPage.classList.add('ready');
         setTimeout(() => { landingScrollLocked = false; }, 2600);
+        // gs.html : le texte d'intro arrive tout seul (on ne sait pas encore qu'il faut scroller)
+        setTimeout(() => { if (landingActive) dismissLanding(); }, 4400);
         // Chevron apparaît 3s après la fin des animations (2.6s + 3s = 5.6s)
         setTimeout(() => { startLandingHintTimer(); }, 2600);
       }
@@ -4806,7 +4812,7 @@
     let landingHintTimer = null;
     let introHintTimer = null;
     const LANDING_HINT_DELAY = 3000;  // 3s si pas de scroll
-    const INTRO_HINT_DELAY = 6000;    // 6s si pas de scroll (user a déjà scrollé une fois)
+    const INTRO_HINT_DELAY = 2500;    // gs.html : l'icône de scroll apparaît vite sous le texte (c'est elle qui dit de scroller)
 
     // Start landing chevron timer (called when landing .ready is set)
     function startLandingHintTimer() {
