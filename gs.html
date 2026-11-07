@@ -1727,6 +1727,7 @@
     // Scènes SHARP préparées par ml-sharp/volume2.py : base brute + couche molécules (on s'enfonce dans l'image)
     const sharpScenes = new SharpScenes(sceneGroup);
     let sharpTime = 0;
+    let gsCalm = 0, gsLastSig = '';   // rendu à la demande en mode SHARP
     const GS_CAMERA_END = -15; // en mode SHARP la caméra va au plus jusqu'à z = -15 : elle traverse le plan de la photo (z = 0)
     // ... mais jamais dans la matière : limite propre à chaque photo (matière la plus proche au centre, avec marge)
     const gsCamEnd = () => Math.max(GS_CAMERA_END, 25 - 25 * sharpScenes.cameraLimit(sharpScenes.current, (25 - GS_CAMERA_END) / 25));
@@ -2740,6 +2741,7 @@
     let precomputeInProgress = false;
 
     function precomputeNextTransition() {
+      if (splatMode) return; // points cachés en mode SHARP : rien à préparer
       if (hasPrecomputed || isTransitioning || precomputeInProgress || availableImages.length === 0) return;
       const currentIndex = availableImages.indexOf(currentImageIndex);
       let nextIndex = (currentIndex + 1) % availableImages.length;
@@ -2816,6 +2818,13 @@
     function transitionToNextImage() {
       if (isTransitioning) return;
       if (availableImages.length === 0) return;
+      if (splatMode) {   // gs.html : points cachés, pas de calcul de couleurs (reconstruits au retour aux points)
+        const ci = availableImages.indexOf(currentImageIndex);
+        currentImageIndex = availableImages[(ci + 1) % availableImages.length];
+        precomputedTransition = null; hasPrecomputed = false;
+        if (typeof updateCursorColor === 'function') updateCursorColor(currentImageIndex);
+        return;
+      }
 
       // Utiliser les données pré-calculées si disponibles
       if (precomputedTransition) {
@@ -4385,7 +4394,7 @@
 
         // Throttle du reload: utiliser requestAnimationFrame pour éviter les reloads multiples
         // BLOQUER RELOAD pendant les transitions (évite freeze/saccades)
-        if (needsReload && !reloadScheduled && !isTransitioning && transitionCooldown === 0) {
+        if (needsReload && !splatMode && !reloadScheduled && !isTransitioning && transitionCooldown === 0) {
           reloadScheduled = true;
           requestAnimationFrame(() => {
             loadImage(currentImageIndex);
@@ -4575,7 +4584,7 @@
         gsWaitingTransition = sharpScenes.busy();
         { const now = performance.now(); if (particleParams.movement > 0) sharpTime += Math.min(0.05, (now - (window._gsLastT || now)) * 0.0006); window._gsLastT = now; } // horloge réelle : pas de saccade
         const photoWeight = updatePhotoPlane();
-        sharpScenes.update({
+        const gsChanged = sharpScenes.update({
           photo: photoWeight,
           cameraZ: camera.position.z,
           disparity: currentAppliedDisparity,
@@ -4587,7 +4596,12 @@
         const cw = sharpScenes.cellW;
         spark.falloff = 1 - 0.8 * cw;
         spark.maxStdDev = Math.sqrt(8) - (Math.sqrt(8) - 1.8) * cw;
-        needsRender = true; // Spark trie les gaussiennes en arrière-plan : rendre chaque image
+        // Rendu à la demande : seulement si quelque chose change (caméra, scène, transition), puis ~0,5 s
+        // de plus pour laisser Spark finir son tri en arrière-plan. Rien ne bouge -> rien n'est redessiné.
+        const e = camera.matrixWorld.elements, sig = e[12] + ',' + e[13] + ',' + e[14] + ',' + e[8] + ',' + e[9] + ',' + e[10];
+        if (gsChanged || sig !== gsLastSig || photoWeight > 0.002 && photoWeight < 0.998) gsCalm = 0; else gsCalm++;
+        gsLastSig = sig;
+        if (gsCalm < 30) needsRender = true;
       }
 
       // (Opt #5 - Early exit) Ne render que si nécessaire

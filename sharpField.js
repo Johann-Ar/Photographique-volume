@@ -252,8 +252,10 @@ export class SharpScenes {
   }
 
   // À chaque image. disparity : 0..7 (états du parcours)
+  // Renvoie true si quelque chose a changé (à redessiner)
   update({ disparity, movement, time, photo = 0, cameraZ = 25 }) {
-    if (!this.visible) return;
+    if (!this.visible) return false;
+    let changed = this.busy();
     this.photoW = photo;
     this.camObj = (D - cameraZ) / D;          // caméra dans le repère des fichiers (0 = point de vue SHARP)
     shared.camZ.value = this.camObj;
@@ -278,7 +280,10 @@ export class SharpScenes {
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? time.toFixed(4) : "0");   // le temps ne compte que si la couche bouge
-      if (key !== l.lastKey) { l.lastKey = key; l.mesh.updateVersion(); }
+      if (key !== l.lastKey) { l.lastKey = key; l.mesh.updateVersion(); changed = true; }
     }
+    const vis = [...this.scenes.values()].map((s) => +s.base.mesh.visible + 2 * s.mol.mesh.visible + (s.base.mesh.isInitialized ? 4 : 0)).join('');
+    if (vis !== this.lastVis) { this.lastVis = vis; changed = true; }
+    return changed;
   }
 }
