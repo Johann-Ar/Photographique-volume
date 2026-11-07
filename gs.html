@@ -1718,8 +1718,8 @@
     // === GAUSSIAN SPLATTING (Spark) ===
     const spark = addSparkRenderer(scene, renderer); // une seule fois (obligatoire depuis Spark 2.0)
     const splatField = new SplatField(sceneGroup); // (ancien essai procédural, plus affiché)
-    // Scènes SHARP préparées par ml-sharp/volume.py : rectangle de la photo + profondeur normalisée
-    const sharpScenes = new SharpScenes(sceneGroup, (i) => `./Ressources/sharp/IMG_00${i}_volume.spz`);
+    // Scènes SHARP préparées par ml-sharp/volume2.py : base brute + couche molécules (on s'enfonce dans l'image)
+    const sharpScenes = new SharpScenes(sceneGroup);
     let sharpTime = 0;
     let splatMode = false;                      // false = points, true = gaussiennes
     let pointsDepthSign = 1;                    // 1 = sens d'origine des points, -1 = sens inversé (test)
@@ -4484,7 +4484,6 @@
       // GAUSSIENNES (SHARP) : relief = disparité du scroll, mêmes mouvements que les points
       if (splatMode) {
         if (isTransitioning && sharpScenes.current !== currentImageIndex) sharpScenes.crossTo(currentImageIndex);
-        if (precomputedTransition) sharpScenes.preload(precomputedTransition.nextImageIndex); // charger la suivante à l'avance
         if (particleParams.movement > 0) sharpTime += 0.01;
         sharpScenes.update({
           disparity: currentAppliedDisparity,
