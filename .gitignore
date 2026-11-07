@@ -20,3 +20,9 @@ node_modules/
 # Build
 dist/
 build/
+
+# Scènes SHARP : seuls les fichiers utilisés par gs.html sont publiés
+# (les .ply intermédiaires et les essais restent en local, ~2,2 Go)
+Ressources/sharp/*
+!Ressources/sharp/*_base.spz
+!Ressources/sharp/*_mol.spz
