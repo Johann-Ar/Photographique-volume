@@ -14,6 +14,7 @@ export const gs = {
   relief: 1.0,   // RELIEF : multiplie la profondeur donnée par le scroll (états 1 à 7)
   jitter: 0.0,   // DISPERSION : z aléatoire (amplitude totale, unités monde)
   alpha: 1.0,    // opacité de chaque gaussienne
+  depthSign: 1,  // 1 = le clair de la carte de profondeur vient vers la caméra ; -1 = sens des points d'origine
 };
 
 // À appeler une seule fois : le moteur de rendu des splats (obligatoire depuis Spark 2.0)
@@ -121,13 +122,13 @@ export class SplatField {
     for (let cy = 0; cy < gh; cy++) {
       for (let cx = 0; cx < gw; cx++) {
         const i = cy * gw + cx;
-        // Profondeur : même signe que les points (rotation.x = PI inverse z)
-        C.set(a.X[i], a.Y[i], -D[i] * disp + J[i] * gs.jitter);
+        // Profondeur : carte claire = proche = vers la caméra (+z) quand depthSign = 1
+        C.set(a.X[i], a.Y[i], gs.depthSign * D[i] * disp + J[i] * gs.jitter);
         // Orientation : normale de la surface de profondeur (différences centrées)
         const l = D[cy * gw + (cx > 0 ? cx - 1 : cx)], r = D[cy * gw + (cx < gw - 1 ? cx + 1 : cx)];
         const u = D[(cy > 0 ? cy - 1 : cy) * gw + cx], d = D[(cy < gh - 1 ? cy + 1 : cy) * gw + cx];
-        const dzdx = -(r - l) * disp * inv2;      // z = -D * disp
-        const dzdy = -(u - d) * disp * inv2;      // Y monde monte quand la ligne d'image diminue
+        const dzdx = gs.depthSign * (r - l) * disp * inv2;      // z = depthSign * D * disp
+        const dzdy = gs.depthSign * (u - d) * disp * inv2;      // Y monde monte quand la ligne d'image diminue
         N.set(-dzdx, -dzdy, 1).normalize();
         Q.setFromUnitVectors(Z, N);
         S.set(sigma, sigma, sigma * gs.flat);

@@ -1654,6 +1654,8 @@
   </script>
   <script type="module">
     import * as THREE from "three";
+    import { gs, addSparkRenderer, buildCells, SplatField } from "./splatField.js";
+    import { sharp, SharpScenes } from "./sharpField.js";
 
     // ═══════════════════════════════════════════════
     // DÉTECTION MOBILE + ADAPTATION QUALITÉ
@@ -1712,6 +1714,20 @@
     const sceneGroup = new THREE.Group();
     sceneGroup.scale.set(0.55, 0.55, 0.55); // Start small, animate to 1.0 on dismissIntro
     scene.add(sceneGroup);
+
+    // === GAUSSIAN SPLATTING (Spark) ===
+    const spark = addSparkRenderer(scene, renderer); // une seule fois (obligatoire depuis Spark 2.0)
+    const splatField = new SplatField(sceneGroup); // (ancien essai procédural, plus affiché)
+    // Scènes SHARP préparées par ml-sharp/volume.py : rectangle de la photo + profondeur normalisée
+    const sharpScenes = new SharpScenes(sceneGroup, (i) => `./Ressources/sharp/IMG_00${i}_volume.spz`);
+    let sharpTime = 0;
+    let splatMode = false;                      // false = points, true = gaussiennes
+    let pointsDepthSign = 1;                    // 1 = sens d'origine des points, -1 = sens inversé (test)
+    let pointsOcclusion = false;                // test : tampon de profondeur pour les points
+    gs.step = isMobile ? 6 : 4;                 // ~95 000 gaussiennes sur ordinateur, ~34 000 sur mobile
+    let splatImageIndex = null;                 // image dont les cellules sont chargées
+    let splatNextIndex = null;                  // image suivante pendant une transition
+    let splatLast = { disp: null, mix: null };  // dernières valeurs écrites (évite les réécritures inutiles)
 
     let particles;
     let currentImageIndex = 1; // Sera mis à jour après détection
@@ -2235,6 +2251,72 @@
       return texture;
     }
 
+    // Cellules de gaussiennes pour une image : mêmes calculs que buildGeometry / extractColorsAndDepths
+    function makeSplatCells(imageIndex) {
+      const imgData = imageCache.get(imageIndex);
+      if (!imgData) return null;
+      const scaleFactor = isMobile ? (isPortrait ? 55 : 58) : 50;
+      const dm = depthMapCache.get(imageIndex) || null;
+      const W = imgData.width, H = imgData.height;
+      return buildCells({
+        imgData, scaleFactor, step: gs.step, rand: seededRandom,
+        depthAt: (x, y, lum) => {
+          const micro = lum - 0.5;
+          let d = micro;
+          if (dm) {
+            const dx = Math.floor(x * (dm.width / W)), dy = Math.floor(y * (dm.height / H));
+            const macro = dm.data[(dy * dm.width + dx) * 4] / 255 - 0.5;
+            d = macro * depthMacroWeight + micro * depthMicroWeight;
+          }
+          return d + (seededRandom(x, y, 3) - 0.5) * 0.02;
+        },
+        colorAt: (r, g, b, lum) => {
+          if (useDepthGradientColors) return colorFromLuminance(lum, imageIndex);
+          const c = saturateColor(r, g, b, particleParams.saturation);
+          return [c.r, c.g, c.b];
+        },
+      });
+    }
+
+    // Charge dans le champ de gaussiennes l'image affichée (seulement en mode gaussien)
+    function syncSplatImage(force = false) {
+      if (!splatMode) return;
+      if (!force && splatImageIndex === currentImageIndex && !splatNextIndex) return;
+      const cells = makeSplatCells(currentImageIndex);
+      if (!cells) return;
+      splatField.setImage(cells);
+      splatImageIndex = currentImageIndex;
+      splatNextIndex = null;
+      splatLast.disp = null;
+    }
+
+    // Bascule Points <-> Gaussiennes
+    function setSplatMode(on) {
+      splatMode = on;
+      if (particles) particles.visible = !on;
+      sharpScenes.setVisible(on);
+      if (on) sharpScenes.show(currentImageIndex);
+      else lastAppliedDisparity = null; // les points recalculent leur profondeur au retour
+      needsResizeRender = true;          // forcer un rendu
+    }
+    function setPointsDepth(sign, occlusion) {
+      pointsDepthSign = sign; pointsOcclusion = occlusion;
+      if (particles) {
+        particles.material.depthWrite = occlusion;
+        particles.material.alphaTest = occlusion ? 0.5 : 0;
+        particles.material.needsUpdate = true;
+      }
+      lastAppliedDisparity = null; // réécrire les profondeurs
+      needsResizeRender = true;
+    }
+    // Test : fixer le niveau de zoom (0 = loin, 0.82 = profondeur max)
+    function setZoom(z) { targetZoomLevel = z; zoomLevel = z; camera.position.z = -minZoom - (-minZoom - maxZoom) * z; needsResizeRender = true; }
+    // Touche G : bascule Points <-> Gaussiennes SHARP (pas sur l'accueil)
+    window.addEventListener('keydown', (e) => {
+      if ((e.key === 'g' || e.key === 'G') && !landingActive && !introActive) setSplatMode(!splatMode);
+    });
+    window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, isOn: () => splatMode }; // accès console pour les tests
+
     // Fonction de chargement d'image optimisée avec cache
     function loadImage(imageIndex) {
       // Mettre à jour la couleur du curseur pour cette image
@@ -2259,7 +2341,8 @@
           opacity: 1,
           map: particleTexture,
           sizeAttenuation: true,
-          depthWrite: false,
+          depthWrite: pointsOcclusion,            // true = les boules proches cachent les lointaines
+          alphaTest: pointsOcclusion ? 0.5 : 0,   // bord net de la boule pour le test de profondeur
           blending: THREE.NormalBlending
         });
 
@@ -2371,6 +2454,8 @@
         // Initialiser le temps pour l'animation
         particles.userData.time = 0;
         sceneGroup.add(particles);
+        particles.visible = !splatMode;
+        if (splatMode) sharpScenes.show(currentImageIndex);
 
         // Forcer le render de la nouvelle image (Opt #5)
         hasInitialRender = false;
@@ -4242,17 +4327,17 @@
         const depthsJustChanged = isTransitioning && oldDepths && newDepths;
 
         // Lerp smooth vers la valeur cible (transition ultra-fluide - configurable)
-        if (depthsJustChanged || Math.abs(targetDisparity - currentAppliedDisparity) > 0.001) {
+        if (depthsJustChanged || lastAppliedDisparity === null || Math.abs(targetDisparity - currentAppliedDisparity) > 0.001) {
           currentAppliedDisparity += (targetDisparity - currentAppliedDisparity) * scrollConfig.global.disparityLerp;
 
           // Seulement mettre à jour GPU si changement visible (>0.001) ou si depths changent
-          if (depthsJustChanged || lastAppliedDisparity === null || Math.abs(currentAppliedDisparity - lastAppliedDisparity) > 0.001) {
+          if (!splatMode && (depthsJustChanged || lastAppliedDisparity === null || Math.abs(currentAppliedDisparity - lastAppliedDisparity) > 0.001)) {
             const positions = particles.geometry.attributes.position.array;
             const initialPositions = particles.geometry.attributes.initialPosition.array;
             const normalizedDepths = particles.geometry.attributes.normalizedDepth.array;
 
             // OPTIMISATION: Loop unrolling pattern - traiter 4 particules à la fois
-            const disparity = currentAppliedDisparity;
+            const disparity = currentAppliedDisparity * pointsDepthSign; // -1 = carte claire vers la caméra
             const len = normalizedDepths.length;
             let i = 0;
 
@@ -4297,7 +4382,7 @@
 
       // Mouvement des particules avec 5 modes différents
       // OPTIMISATION PRO: Utilise function dispatch au lieu de branches dans loop chaud
-      if (particles && particleParams.movement > 0) {
+      if (particles && particleParams.movement > 0 && !splatMode) {
         particles.userData.time += 0.01;
 
         const positions = particles.geometry.attributes.position.array;
@@ -4391,6 +4476,20 @@
         dragCurrentY = 0;
         camera.lookAt(0, 0, 0);
         needsRender = true;
+      }
+
+      // GAUSSIENNES (SHARP) : relief = disparité du scroll, mêmes mouvements que les points
+      if (splatMode) {
+        if (isTransitioning && sharpScenes.current !== currentImageIndex) sharpScenes.crossTo(currentImageIndex);
+        if (precomputedTransition) sharpScenes.preload(precomputedTransition.nextImageIndex); // charger la suivante à l'avance
+        if (particleParams.movement > 0) sharpTime += 0.01;
+        sharpScenes.update({
+          disparity: currentAppliedDisparity,
+          movement: particleParams.movement,
+          time: sharpTime,
+          mix: isTransitioning ? (window.lastTransitionProgress || 0) : 1,
+        });
+        needsRender = true; // Spark trie les gaussiennes en arrière-plan : rendre chaque image
       }
 
       // (Opt #5 - Early exit) Ne render que si nécessaire
