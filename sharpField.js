@@ -107,19 +107,28 @@ export const TRANSITION = { wait: 600, out: 800, black: 250, in: 800 }; // milli
 // matière visible (25e centile des gaussiennes qui s'y projettent = surface la plus proche), lissée.
 export const GW = 96, GH = 49, HALF_U = 0.587, HALF_V = 0.3003;
 function depthGridFrom(ps) {
-  const n = ps.numSplats, cells = Array.from({ length: GW * GH }, () => []), all = [];
+  // tableaux typés et tri natif (le tri d'un tableau JS avec comparateur coûtait ~60 ms et bloquait l'image)
+  const n = ps.numSplats, NC = GW * GH, cap = Math.ceil(n / 9);
+  const zs = new Float32Array(cap), cellOf = new Int32Array(cap), count = new Int32Array(NC + 1);
+  let m = 0;
   for (let k = 0; k < n; k += 9) {
     const u = unpackSplat(ps.packedArray, k, ps.splatEncoding);
     if (u.opacity < 0.3 || u.center.z < 0.05) continue;
     const gx = Math.round(((u.center.x / u.center.z) / HALF_U * 0.5 + 0.5) * (GW - 1));
     const gy = Math.round(((u.center.y / u.center.z) / HALF_V * 0.5 + 0.5) * (GH - 1));
     if (gx < 0 || gx >= GW || gy < 0 || gy >= GH) continue;
-    cells[gy * GW + gx].push(u.center.z); all.push(u.center.z);
+    zs[m] = u.center.z; cellOf[m] = gy * GW + gx; count[cellOf[m] + 1]++; m++;
   }
-  all.sort((a, b) => a - b);
-  const median = all.length ? all[all.length >> 1] : 1;
-  let z = new Float32Array(GW * GH).fill(NaN);
-  cells.forEach((c, i) => { if (c.length) { c.sort((a, b) => a - b); z[i] = c[Math.floor(c.length * 0.25)]; } });
+  for (let i = 0; i < NC; i++) count[i + 1] += count[i];        // début de chaque case dans le tableau trié par case
+  const byCell = new Float32Array(m), fill = count.slice(0, NC);
+  for (let j = 0; j < m; j++) byCell[fill[cellOf[j]]++] = zs[j];
+  const all = zs.subarray(0, m).sort();
+  const median = m ? all[m >> 1] : 1;
+  let z = new Float32Array(NC).fill(NaN);
+  for (let i = 0; i < NC; i++) {
+    const a = count[i], b = count[i + 1];
+    if (b > a) { const c = byCell.subarray(a, b).sort(); z[i] = c[Math.floor(c.length * 0.25)]; }
+  }
   for (let pass = 0; pass < 20; pass++) {        // cases vides : moyenne des voisines
     let empty = 0; const nz = z.slice();
     for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
@@ -190,6 +199,9 @@ export class SharpScenes {
   cameraLimit(i, max = 1.6, margin = 0.2) {
     const g = this.depthGrid(i);
     if (!g) return max;
+    // appelé à chaque image pendant le scroll : résultat gardé tant que la grille et les réglages ne changent pas
+    const key = max + '|' + margin + '|' + sharp.depthGamma;
+    if (g._limitKey === key) return g._limit;
     let zmin = Infinity;
     for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
       const u = -HALF_U + 2 * HALF_U * x / (GW - 1), v = -HALF_V + 2 * HALF_V * y / (GH - 1);
@@ -198,7 +210,8 @@ export class SharpScenes {
       if (Math.hypot(u, v) * zc > 0.16) continue;
       zmin = Math.min(zmin, zc);
     }
-    return Math.max(0.2, Math.min(max, zmin - margin));
+    g._limitKey = key;
+    return (g._limit = Math.max(0.2, Math.min(max, zmin - margin)));
   }
   depthGrid(i) { const s = this.scenes.get(i); return s && s.depthGrid ? s.depthGrid : null; }
   photoDepth(i) { const s = this.scenes.get(i); return s && s.zMedian ? Math.pow(Math.max(1, s.zMedian), sharp.depthGamma) : 1; }
@@ -226,6 +239,7 @@ export class SharpScenes {
   }
 
   _apply() {
+    this.molOn = false;
     for (const [i, s] of this.scenes) {
       const fade = i === this.current ? this.fadeCur : i === this.next ? this.fadeNext : 0;
       for (const layer of [s.base, s.mol]) {
@@ -235,6 +249,7 @@ export class SharpScenes {
         const on = this.visible && fade > 0 && op > 0.001 && (!layer.isMol || (sharp.showMol && molNeeded));
         layer.mesh.opacity = op;
         layer.mesh.visible = on;
+        if (on && layer.isMol) this.molOn = true;   // couche lourde affichée (lu par la cadence adaptative)
         layer.u.fade.value = fade;
         layer.u.inn.value = i === this.next ? 1 : 0;   // photo qui apparaît
       }

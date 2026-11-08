@@ -2954,6 +2954,12 @@
     // Variables pour optimisations
     let hasInitialRender = false; // Pour forcer un premier render
     let needsResizeRender = false; // Forcer render après resize
+    // Cadence adaptative (SHARP) : si la carte graphique ne suit pas 60 images/s, les images s'empilent et
+    // chaque tri de Spark bloque la page 100 à 300 ms. Dans ce cas seulement, on dessine au plus ~30 images/s
+    // pendant le mouvement : régulier, sans à-coups, et sans rien changer à l'image elle-même.
+    // Décidé séparément avec et sans la couche cellules (bien plus lourde), une fois pour la visite.
+    const pace = { cap: [false, false], hitches: [], lastTick: 0, active: false, pending: false, lastDraw: 0 };
+    window.photoVolumePace = pace; // accès console pour les tests
     let lastAppliedDisparity = null; // Tracker disparity pour éviter mises à jour inutiles
     let currentAppliedDisparity = 0; // Disparity actuellement appliquée (avec lerp)
     let needsPositionUpdate = false; // Batch GPU updates pour éviter appels multiples
@@ -4657,8 +4663,24 @@
       }
 
       // (Opt #5 - Early exit) Ne render que si nécessaire
-      if (needsRender) {
-        renderer.render(scene, camera);
+      const tickNow = performance.now(), tickGap = tickNow - pace.lastTick;
+      pace.lastTick = tickNow;
+      if (needsRender || pace.pending) {
+        const heavy = sharpScenes.molOn ? 1 : 0;
+        if (splatMode && pace.active && tickGap > 55 && tickGap < 1000) {   // à-coup en plein mouvement
+          pace.hitches = pace.hitches.filter((t) => tickNow - t < 3000);
+          if (pace.hitches.push(tickNow) >= 3) { pace.cap[heavy] = true; pace.hitches = []; }
+        }
+        if (splatMode && pace.cap[heavy] && tickNow - pace.lastDraw < 28) {
+          pace.pending = true;               // image suivante : on garde la demande de rendu
+        } else {
+          pace.pending = false;
+          pace.lastDraw = tickNow;
+          renderer.render(scene, camera);
+        }
+        pace.active = true;
+      } else {
+        pace.active = false;
       }
     }
     animate();
