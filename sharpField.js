@@ -207,8 +207,8 @@ export class SharpScenes {
     let s = this.scenes.get(i);
     if (!s) {
       s = {
-        base: makeLayer(`./Ressources/sharp/IMG_00${i}_base.spz`, false),
-        mol: makeLayer(`./Ressources/sharp/IMG_00${i}_mol.spz`, true),
+        base: makeLayer(`./Ressources/sharp/IMG_00${i}_base.spz?v=2`, false),
+        mol: makeLayer(`./Ressources/sharp/IMG_00${i}_mol.spz?v=2`, true),
       };
       this.parent.add(s.base.mesh, s.mol.mesh);
       this.scenes.set(i, s);
