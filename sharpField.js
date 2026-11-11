@@ -22,7 +22,8 @@ export const sharp = {
   curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
   frameMode: 0,     // CADRE : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés (gs.html?cadre=fixe|bords, touche C)
   frameBand: 0.15,  // mode 2 : largeur de la bande « bord » (part de la demi-hauteur de la photo)
-  frameDepthMul: 1, // profondeur du plan du cadre (1 = fond de la scène, 90e centile de la carte de profondeur)
+  frameDepthMul: 1, // profondeur du plan du cadre (1 = surface la plus lointaine de la scène : le fond remplit toujours le cadre)
+  backdrop: true,   // modes cadre : la photo posée au fond du cadre bouche les vides (fond qui s'éloigne, zones cachées)
 };
 
 // L'œil de SHARP est placé exactement au départ de la caméra du site (z = 25) : vue de là, la vraie
@@ -172,8 +173,9 @@ function depthGridFrom(ps) {
     sm[y * GW + x] = sum / c;
   }
   sm.median = median;
-  const q = Float32Array.from(sm).sort();          // fond de la scène : 90e centile (plan du cadre)
-  sm.far = q[Math.floor(q.length * 0.9)];
+  let far = 0;                                    // fond de la scène : surface la plus lointaine (plan du cadre)
+  for (let i = 0; i < sm.length; i++) far = Math.max(far, sm[i]);
+  sm.far = far;
   return sm;
 }
 
@@ -209,7 +211,8 @@ export class SharpScenes {
       this.parent.add(s.base.mesh, s.mol.mesh);
       this.scenes.set(i, s);
       // Carte de profondeur tirée de SHARP (pour plier la photo 2D) + profondeur médiane
-      s.base.mesh.initialized.then((m) => { s.depthGrid = depthGridFrom(m.packedSplats); s.zMedian = s.depthGrid.median; s.zFar = s.depthGrid.far; });
+      s.base.mesh.initialized.then((m) => { if (!m.packedSplats) return;   // scène déjà libérée entre-temps
+        s.depthGrid = depthGridFrom(m.packedSplats); s.zMedian = s.depthGrid.median; s.zFar = s.depthGrid.far; });
     }
     return s;
   }
@@ -239,6 +242,8 @@ export class SharpScenes {
     g._limitKey = key;
     return (g._limit = Math.max(0.2, Math.min(max, zmin - margin)));
   }
+  // Profondeur (compressée) du plan du cadre pour la photo i
+  frameDepth(i) { const s = this.scenes.get(i); return Math.pow(Math.max((s && s.zFar) || 1.5, 0.05), sharp.depthGamma) * sharp.frameDepthMul; }
   depthGrid(i) { const s = this.scenes.get(i); return s && s.depthGrid ? s.depthGrid : null; }
   photoDepth(i) { const s = this.scenes.get(i); return s && s.zMedian ? Math.pow(Math.max(1, s.zMedian), sharp.depthGamma) : 1; }
 
@@ -318,11 +323,11 @@ export class SharpScenes {
     shared.prog.value = p;
     sharp.progress = p;
     shared.gamma.value = sharp.depthGamma;
-    for (const [, s] of this.scenes) {
+    for (const [i, s] of this.scenes) {
       s.base.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D;
       s.mol.u.move.value = (movement * 2 * sharp.cellMove) / D;   // cellules : ton mouvement, à l'identique
       s.mol.u.size.value = sharp.molSize;
-      const zr = Math.pow(Math.max(s.zFar || 1.5, 0.05), sharp.depthGamma) * sharp.frameDepthMul;
+      const zr = this.frameDepth(i);
       s.base.u.zr.value = zr; s.mol.u.zr.value = zr;
     }
     const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameMode ? this.camObj.toFixed(4) : 0].join("|");

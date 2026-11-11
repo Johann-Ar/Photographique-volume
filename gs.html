@@ -2350,7 +2350,7 @@
       splatMode = on;
       if (particles) particles.visible = !on;
       sharpScenes.setVisible(on);
-      if (!on) { photoPlane.visible = false; photoW = 0; }
+      if (!on) { photoPlane.visible = false; photoW = 0; backdrop.visible = false; }
       camera.position.z = -minZoom - (-minZoom - (on ? gsCamEnd() : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
       else { lastAppliedDisparity = null; if (particles && !isTransitioning) loadImage(currentImageIndex); } // retour aux points : profondeur et couleurs à jour
@@ -2430,6 +2430,30 @@
       if (photoBentFor !== sharpScenes.current) bendPhoto(sharpScenes.current);
       if (photoBentFor !== sharpScenes.current) photoPlane.visible = false; // pas encore de carte : on attend
       return photoW;
+    }
+
+    // === FOND PLEIN DU CADRE (modes cadre fixe / bords) ===
+    // La photo, à plat, posée exactement sur le rectangle du cadre (au fond de la scène) et dessinée sous les
+    // gaussiennes : quand le fond s'éloigne ou qu'un relief découvre une zone que SHARP ne connaît pas,
+    // le cadre reste plein au lieu de montrer du noir.
+    const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false, depthWrite: false, depthTest: false }));
+    backdrop.renderOrder = -1;
+    backdrop.visible = false;
+    sceneGroup.add(backdrop);
+    function updateBackdrop(photoWeight) {
+      const showNext = sharpScenes.next != null && sharpScenes.fadeNext > 0;
+      const idx = showNext ? sharpScenes.next : sharpScenes.current;
+      const fade = showNext ? sharpScenes.fadeNext : sharpScenes.fadeCur;
+      const tex = splatMode && sharp.frameMode > 0 && sharp.backdrop && idx != null && sharpScenes.depthGrid(idx) ? photoTexture(idx) : null;
+      const op = tex ? fade * (1 - photoWeight) : 0;
+      backdrop.visible = op > 0.001;
+      if (!backdrop.visible) return;
+      if (backdrop.material.map !== tex) { backdrop.material.map = tex; backdrop.material.needsUpdate = true; }
+      backdrop.material.opacity = op;
+      const zr = sharpScenes.frameDepth(idx);   // même rectangle que le cadre des gaussiennes
+      backdrop.position.set(0, 0, 25 - 25 * zr);
+      backdrop.scale.set(2 * 25 * HALF_U * zr, 2 * 25 * HALF_V * zr, 1);
     }
 
     // Touche G : bascule Points <-> Gaussiennes SHARP, à tout moment
@@ -4650,6 +4674,7 @@
         gsWaitingTransition = sharpScenes.busy();
         { const now = performance.now(); if (particleParams.movement > 0) sharpTime += Math.min(0.05, (now - (window._gsLastT || now)) * 0.0006); window._gsLastT = now; } // horloge réelle : pas de saccade
         const photoWeight = updatePhotoPlane();
+        updateBackdrop(photoWeight);
         const gsChanged = sharpScenes.update({
           photo: photoWeight,
           cameraZ: camera.position.z,
