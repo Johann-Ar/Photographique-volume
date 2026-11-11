@@ -20,13 +20,16 @@ export const sharp = {
   progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
   depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
   curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
+  frameMode: 0,     // CADRE : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés (gs.html?cadre=fixe|bords, touche C)
+  frameBand: 0.15,  // mode 2 : largeur de la bande « bord » (part de la demi-hauteur de la photo)
+  frameDepthMul: 1, // profondeur du plan du cadre (1 = fond de la scène, 90e centile de la carte de profondeur)
 };
 
 // L'œil de SHARP est placé exactement au départ de la caméra du site (z = 25) : vue de là, la vraie
 // scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
 // Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
 const D = 25;
-const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0) };
+const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0), camF: dyno.dynoFloat(0), frame: dyno.dynoFloat(0), band: dyno.dynoFloat(0.15) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
@@ -72,24 +75,45 @@ const GLSL = (o, i) => `
   // Couleurs : la page sort en linéaire (rendu r128 des points), et Spark applique alors srgbToLinear
   // (pow 2,2) à chaque gaussienne ; on compense pour retrouver exactement les couleurs de la photo.
   ${o.gsplat}.rgba.rgb = pow(max(${o.gsplat}.rgba.rgb, vec3(0.0)), vec3(1.0 / 2.2));
-  vec2 uv = ${o.gsplat}.center.xy / max(${o.gsplat}.center.z, 0.05);
-  if (abs(uv.x) > 0.587 || abs(uv.y) > 0.300) ${o.gsplat}.rgba.a = 0.0;
-  // ... et une gaussienne proche du bord est réduite pour que son halo (2 écarts-types) reste dans le cadre
-  float edge = min(0.587 - abs(uv.x), 0.300 - abs(uv.y)) * max(${o.gsplat}.center.z, 0.05);
-  ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(max(edge, 0.0) * 0.5));
+  // Trois façons de couper (sharp.frameMode) :
+  //  0 : rectangle vu depuis le point de vue SHARP (d'origine)
+  //  1 : CADRE — rectangle de la photo posé à la profondeur zr, vu depuis la caméra : il grandit quand on
+  //      avance, et rien ne peut en sortir à l'écran (le haut d'un rocher proche est coupé)
+  //  2 : BORDS — même cadre, mais seules les gaussiennes venues du bord de la photo sont coupées ;
+  //      le volume de l'intérieur de l'image peut déborder du cadre
+  float zc = max(${o.gsplat}.center.z, 0.05);
+  vec2 uv = ${o.gsplat}.center.xy / zc;
+  float k = zc;                 // passage des unités du cadre aux unités de la gaussienne
+  bool clip = true;
+  if (${i.frame} > 0.5) {
+    float s = (${i.zr} - ${i.camf}) / max(zc - ${i.camf}, 0.02);
+    uv = ${o.gsplat}.center.xy * s / ${i.zr};
+    k = ${i.zr} / max(s, 1e-4);
+    if (${i.camf} > ${i.zr} - 0.02) clip = false;   // cadre devenu plus grand que l'écran
+    if (${i.frame} > 1.5) {
+      vec2 uv0 = ${i.gsplat}.center.xy / max(${i.gsplat}.center.z, 0.05);   // place d'origine dans la photo
+      if (min(0.587 - abs(uv0.x), 0.300 - abs(uv0.y)) > ${i.band} * 0.300) clip = false;
+    }
+  }
+  if (clip) {
+    if (abs(uv.x) > 0.587 || abs(uv.y) > 0.300) ${o.gsplat}.rgba.a = 0.0;
+    // ... et une gaussienne proche du bord est réduite pour que son halo (2 écarts-types) reste dans le cadre
+    float edge = min(0.587 - abs(uv.x), 0.300 - abs(uv.y)) * k;
+    ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(max(edge, 0.0) * 0.5));
+  }
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
-  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0), solid: dyno.dynoFloat(isMol ? 1 : 0) };
+  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0), solid: dyno.dynoFloat(isMol ? 1 : 0), zr: dyno.dynoFloat(1.5) };
   const mesh = new SplatMesh({ url });
   mesh.quaternion.set(1, 0, 0, 0);            // OpenCV -> three.js (y et z retournés)
   mesh.position.set(0, 0, D);
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float", camf: "float", frame: "float", band: "float", zr: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR, camf: shared.camF, frame: shared.frame, band: shared.band, zr: u.zr },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -148,6 +172,8 @@ function depthGridFrom(ps) {
     sm[y * GW + x] = sum / c;
   }
   sm.median = median;
+  const q = Float32Array.from(sm).sort();          // fond de la scène : 90e centile (plan du cadre)
+  sm.far = q[Math.floor(q.length * 0.9)];
   return sm;
 }
 
@@ -183,7 +209,7 @@ export class SharpScenes {
       this.parent.add(s.base.mesh, s.mol.mesh);
       this.scenes.set(i, s);
       // Carte de profondeur tirée de SHARP (pour plier la photo 2D) + profondeur médiane
-      s.base.mesh.initialized.then((m) => { s.depthGrid = depthGridFrom(m.packedSplats); s.zMedian = s.depthGrid.median; });
+      s.base.mesh.initialized.then((m) => { s.depthGrid = depthGridFrom(m.packedSplats); s.zMedian = s.depthGrid.median; s.zFar = s.depthGrid.far; });
     }
     return s;
   }
@@ -276,7 +302,10 @@ export class SharpScenes {
     let changed = this.busy();
     this.photoW = photo;
     this.camObj = (D - cameraZ) / D;          // caméra dans le repère des fichiers (0 = point de vue SHARP)
-    shared.camZ.value = Math.round(this.camObj * 100) / 100;   // pas de 0,25 unité : invisible, mais moins de recalculs
+    shared.camZ.value = Math.round(this.camObj * 100) / 100;
+    shared.camF.value = this.camObj;          // valeur exacte pour le cadre (sinon il grandit par à-coups)
+    shared.frame.value = sharp.frameMode;
+    shared.band.value = sharp.frameBand;   // pas de 0,25 unité : invisible, mais moins de recalculs
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
     const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
@@ -293,8 +322,10 @@ export class SharpScenes {
       s.base.u.move.value = (Math.pow(Math.min(1, movement / 0.5), sharp.curve) * 0.5 * 2 * sharp.moveMul) / D;
       s.mol.u.move.value = (movement * 2 * sharp.cellMove) / D;   // cellules : ton mouvement, à l'identique
       s.mol.u.size.value = sharp.molSize;
+      const zr = Math.pow(Math.max(s.zFar || 1.5, 0.05), sharp.depthGamma) * sharp.frameDepthMul;
+      s.base.u.zr.value = zr; s.mol.u.zr.value = zr;
     }
-    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize].join("|");
+    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameMode ? this.camObj.toFixed(4) : 0].join("|");
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? Math.floor(performance.now() / 33) : "0");   // mouvement : 30 recalculs / s au plus
