@@ -5617,8 +5617,18 @@
         if (event.key === 'Escape') dismissIntro();
         return;
       }
+      // Espace → active / désactive la version 2 du cadre (« bords seulement »)
+      if (event.key === ' ') {
+        event.preventDefault();
+        if (!event.repeat) {
+          sharp.frameMode = sharp.frameMode === 2 ? 0 : 2;
+          console.log('[Cadre]', ['origine', 'fixe', 'bords'][sharp.frameMode]);
+          needsResizeRender = true;
+        }
+        return;
+      }
       // Alt → toggle info overlay / Esc → fermer
-      if (event.key === 'Alt' || event.key === ' ') {
+      if (event.key === 'Alt') {
         event.preventDefault();
         toggleInfoOverlay();
         return;
