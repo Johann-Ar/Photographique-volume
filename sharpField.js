@@ -22,6 +22,7 @@ export const sharp = {
   curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
   frameMode: 0,     // CADRE : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés (gs.html?cadre=fixe|bords, touche C)
   frameBand: 0.15,  // mode 2 : largeur de la bande « bord » (part de la demi-hauteur de la photo)
+  frameNear: 1,     // mode 2 : seul le volume plus proche que frameNear x profondeur médiane peut déborder (le fond reste dans le cadre)
   frameDepthMul: 1, // profondeur du plan du cadre (1 = surface la plus lointaine de la scène : le fond remplit toujours le cadre)
   backdrop: true,   // modes cadre : la photo posée au fond du cadre bouche les vides (fond qui s'éloigne, zones cachées)
 };
@@ -93,7 +94,8 @@ const GLSL = (o, i) => `
     if (${i.camf} > ${i.zr} - 0.02) clip = false;   // cadre devenu plus grand que l'écran
     if (${i.frame} > 1.5) {
       vec2 uv0 = ${i.gsplat}.center.xy / max(${i.gsplat}.center.z, 0.05);   // place d'origine dans la photo
-      if (min(0.587 - abs(uv0.x), 0.300 - abs(uv0.y)) > ${i.band} * 0.300) clip = false;
+      // seul le volume de l'intérieur ET proche déborde : le fond, lui, reste dans le rectangle
+      if (min(0.587 - abs(uv0.x), 0.300 - abs(uv0.y)) > ${i.band} * 0.300 && zc < ${i.zn}) clip = false;
     }
   }
   if (clip) {
@@ -105,16 +107,16 @@ const GLSL = (o, i) => `
 `.split("\n").map((l) => l.trim()).filter(Boolean);
 
 function makeLayer(url, isMol) {
-  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0), solid: dyno.dynoFloat(isMol ? 1 : 0), zr: dyno.dynoFloat(1.5) };
+  const u = { fade: dyno.dynoFloat(1), move: dyno.dynoFloat(0), size: dyno.dynoFloat(1), inn: dyno.dynoFloat(0), solid: dyno.dynoFloat(isMol ? 1 : 0), zr: dyno.dynoFloat(1.5), zn: dyno.dynoFloat(1) };
   const mesh = new SplatMesh({ url });
   mesh.quaternion.set(1, 0, 0, 0);            // OpenCV -> three.js (y et z retournés)
   mesh.position.set(0, 0, D);
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float", camf: "float", frame: "float", band: "float", zr: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float", camf: "float", frame: "float", band: "float", zr: "float", zn: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR, camf: shared.camF, frame: shared.frame, band: shared.band, zr: u.zr },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR, camf: shared.camF, frame: shared.frame, band: shared.band, zr: u.zr, zn: u.zn },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -329,8 +331,9 @@ export class SharpScenes {
       s.mol.u.size.value = sharp.molSize;
       const zr = this.frameDepth(i);
       s.base.u.zr.value = zr; s.mol.u.zr.value = zr;
+      const zn = Math.min(zr, this.photoDepth(i) * sharp.frameNear); s.base.u.zn.value = zn; s.mol.u.zn.value = zn;
     }
-    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameMode ? this.camObj.toFixed(4) : 0].join("|");
+    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, sharp.frameMode ? this.camObj.toFixed(4) : 0].join("|");
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? Math.floor(performance.now() / 33) : "0");   // mouvement : 30 recalculs / s au plus
