@@ -20,7 +20,9 @@ export const sharp = {
   progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
   depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
   curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
-  frameMode: 0,     // CADRE : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés (gs.html?cadre=fixe|bords, touche C)
+  frameMode: 0,     // CADRE : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés, 3 = membrane élastique (gs.html?cadre=fixe|bords|membrane, touche C)
+  membraneBand: 0.7, // mode 3 : largeur de la zone où la membrane remonte vers ses épingles (part de la demi-hauteur de la photo)
+  membraneDepth: 1,  // mode 3 : enfoncement maximal (1 = relief SHARP complet au fond du scroll)
   frameBand: 0.15,  // mode 2 : largeur de la bande « bord » (part de la demi-hauteur de la photo)
   frameNear: 1,     // mode 2 : seul le volume plus proche que frameNear x profondeur médiane peut déborder (le fond reste dans le cadre)
   frameDepthMul: 1, // profondeur du plan du cadre (1 = surface la plus lointaine de la scène : le fond remplit toujours le cadre)
@@ -31,7 +33,7 @@ export const sharp = {
 // scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
 // Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
 const D = 25;
-const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0), camF: dyno.dynoFloat(0), frame: dyno.dynoFloat(0), band: dyno.dynoFloat(0.15) };
+const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0), camF: dyno.dynoFloat(0), frame: dyno.dynoFloat(0), band: dyno.dynoFloat(0.15), memb: dyno.dynoFloat(0), mband: dyno.dynoFloat(0.7) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
@@ -39,8 +41,25 @@ const GLSL = (o, i) => `
   // presque un plan qui garde la forme du rectangle, et la vue depuis le départ reste identique (nette).
   float z0 = max(${i.gsplat}.center.z, 0.05);
   float z = pow(z0, ${i.gam});
+  // Mode 3, MEMBRANE : la photo est imprimée sur une membrane élastique tendue dans un cadre fixe (plan z = 1),
+  // tenue par des épingles sur tout son bord. Le scroll l'enfonce (memb : 0 = plate -> 1 = relief SHARP) ;
+  // chaque point recule le long de son rayon, donc la photo reste exacte vue de face, et l'enfoncement
+  // retombe à zéro sur le bord : le rectangle ne bouge jamais.
+  vec2 uvm = ${i.gsplat}.center.xy / z0;
+  float mstretch = 1.0;
+  if (${i.frame} > 2.5) {
+    float bw = max(${i.mband} * 0.300, 1e-4);
+    float dm = clamp(min(0.587 - abs(uvm.x), 0.300 - abs(uvm.y)) / bw, 0.0, 1.0);
+    float wm = dm * dm * (3.0 - 2.0 * dm);
+    float zf = z;
+    z = 1.0 + (zf - 1.0) * ${i.memb} * wm;
+    // là où la membrane remonte vers ses épingles, la surface est en pente raide : on élargit
+    // les gaussiennes d'autant pour que la matière reste continue (pas de trous vus de biais)
+    float slope = abs(zf - 1.0) * ${i.memb} * 6.0 * dm * (1.0 - dm) / bw;
+    mstretch = min(sqrt(1.0 + slope * slope / (z * z)), 4.0);
+  }
   ${o.gsplat}.center *= z / z0;
-  ${o.gsplat}.scales *= z / z0;
+  ${o.gsplat}.scales *= z / z0 * mstretch;
   float fi = float(${i.gsplat}.index);
   float h = fract(sin(fi * 12.9898) * 43758.5453);
   float h2 = fract(sin(fi * 78.233) * 12543.1);
@@ -50,7 +69,7 @@ const GLSL = (o, i) => `
   ${o.gsplat}.center.xy += (vec2(h2, h3) - 0.5) * 1.2 * z / 1288.0 * clamp(${i.t} * 4.0, 0.0, 1.0);
   // cellules : la gaussienne s'arrondit en partie, sans changer de volume
   float g = pow(max(${i.gsplat}.scales.x * ${i.gsplat}.scales.y * ${i.gsplat}.scales.z, 1e-30), 1.0 / 3.0);
-  ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0), ${i.rnd}) * ${i.size};
+  ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0 * mstretch), ${i.rnd}) * ${i.size};
   // au fond du scroll : taille plafonnée (≈ 1,6 pixel de la photo) -> plein de petites cellules nettes au lieu du flou
   float cap = mix(1000.0, 2.2 * z / 1288.0, ${i.prog});
   ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(cap));
@@ -87,7 +106,9 @@ const GLSL = (o, i) => `
   vec2 uv = ${o.gsplat}.center.xy / zc;
   float k = zc;                 // passage des unités du cadre aux unités de la gaussienne
   bool clip = true;
-  if (${i.frame} > 0.5) {
+  if (${i.frame} > 2.5) {
+    uv = uvm; k = z;             // membrane : le cadre est celui de la photo, cloué sur le plan z = 1
+  } else if (${i.frame} > 0.5) {
     float s = (${i.zr} - ${i.camf}) / max(zc - ${i.camf}, 0.02);
     uv = ${o.gsplat}.center.xy * s / ${i.zr};
     k = ${i.zr} / max(s, 1e-4);
@@ -114,9 +135,9 @@ function makeLayer(url, isMol) {
   mesh.scale.setScalar(D);
   mesh.objectModifier = dyno.dynoBlock({ gsplat: dyno.Gsplat }, { gsplat: dyno.Gsplat }, ({ gsplat }) => {
     const block = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float", camf: "float", frame: "float", band: "float", zr: "float", zn: "float" },
+      inTypes: { gsplat: dyno.Gsplat, t: "float", time: "float", move: "float", size: "float", fade: "float", rnd: "float", gam: "float", prog: "float", inn: "float", solid: "float", camz: "float", cellr: "float", camf: "float", frame: "float", band: "float", zr: "float", zn: "float", memb: "float", mband: "float" },
       outTypes: { gsplat: dyno.Gsplat },
-      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR, camf: shared.camF, frame: shared.frame, band: shared.band, zr: u.zr, zn: u.zn },
+      inputs: { gsplat, t: shared.t, time: shared.time, move: u.move, size: u.size, fade: u.fade, rnd: shared.round, gam: shared.gamma, prog: shared.prog, inn: u.inn, solid: u.solid, camz: shared.camZ, cellr: shared.cellR, camf: shared.camF, frame: shared.frame, band: shared.band, zr: u.zr, zn: u.zn, memb: shared.memb, mband: shared.mband },
       statements: ({ inputs, outputs }) => GLSL(outputs, inputs),
     });
     return { gsplat: block.outputs.gsplat };
@@ -312,7 +333,10 @@ export class SharpScenes {
     shared.camZ.value = Math.round(this.camObj * 100) / 100;
     shared.camF.value = this.camObj;          // valeur exacte pour le cadre (sinon il grandit par à-coups)
     shared.frame.value = sharp.frameMode;
-    shared.band.value = sharp.frameBand;   // pas de 0,25 unité : invisible, mais moins de recalculs
+    shared.band.value = sharp.frameBand;
+    // membrane : l'enfoncement suit le scroll, vite au début puis plus doucement (comme une main qui pousse)
+    { const t = Math.min(1, Math.max(0, disparity / 7)); shared.memb.value = Math.round((1 - Math.pow(1 - t, 2)) * sharp.membraneDepth * 1000) / 1000; }
+    shared.mband.value = sharp.membraneBand;   // pas de 0,25 unité : invisible, mais moins de recalculs
     shared.t.value = Math.min(1, Math.max(0, disparity / 7)) * sharp.reliefMul;
     shared.time.value = time;
     const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
@@ -333,7 +357,7 @@ export class SharpScenes {
       s.base.u.zr.value = zr; s.mol.u.zr.value = zr;
       const zn = Math.min(zr, this.photoDepth(i) * sharp.frameNear); s.base.u.zn.value = zn; s.mol.u.zn.value = zn;
     }
-    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, sharp.frameMode ? this.camObj.toFixed(4) : 0].join("|");
+    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, sharp.frameMode ? this.camObj.toFixed(4) : 0, shared.memb.value, sharp.membraneBand].join("|");
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? Math.floor(performance.now() / 33) : "0");   // mouvement : 30 recalculs / s au plus
