@@ -2477,9 +2477,11 @@
       }
     });
     // gs.html?cadre=fixe : rien ne sort du cadre ; gs.html?cadre=bords : seuls les bords de la photo sont coupés
-    { const c = new URLSearchParams(location.search).get('cadre'); if (c === 'fixe') sharp.frameMode = 1; else if (c === 'bords') sharp.frameMode = 2; else if (c === 'membrane') sharp.frameMode = 3; }
+    // paramètres de l'adresse : un « ? » en trop (gs.html?mode=gs?cadre=membrane) compte comme un « & »
+    const urlParams = new URLSearchParams(location.search.slice(1).replace(/\?/g, '&'));
+    { const c = urlParams.get('cadre'); if (c === 'fixe') sharp.frameMode = 1; else if (c === 'bords') sharp.frameMode = 2; else if (c === 'membrane') sharp.frameMode = 3; }
     // gs.html?mode=gs : démarrer directement en gaussiennes SHARP
-    const startInGs = new URLSearchParams(location.search).get('mode') === 'gs';
+    const startInGs = urlParams.get('mode') === 'gs';
     window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, isOn: () => splatMode }; // accès console pour les tests
 
     // Fonction de chargement d'image optimisée avec cache
