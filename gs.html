@@ -12,7 +12,9 @@
   <link rel="icon" type="image/png" href="Ressources/favicon.png">
   <link rel="apple-touch-icon" sizes="180x180" href="Ressources/favicon.png">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; cursor: none !important; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* curseur normal partout, masqué seulement quand le curseur personnalisé est affiché */
+    html.cc-on, html.cc-on * { cursor: none !important; }
     /* Custom cursor — image-based */
     #custom-cursor {
       position: fixed; top: 0; left: 0;
@@ -39,7 +41,6 @@
       background-color: #000000;
       position: relative;
       touch-action: none;
-      cursor: none;
     }
     /* Info overlay */
     #info-overlay {
@@ -886,11 +887,7 @@
     }
     #click-gate.dismissing {
       pointer-events: none;
-      cursor: none !important;
       animation: clickGateFadeOut 1.6s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
-    }
-    #click-gate.dismissing * {
-      cursor: none !important;
     }
     #click-gate.dismissing .click-gate-text {
       animation: clickGateTextOut 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -1235,7 +1232,7 @@
     </div>
   </div>
 
-  <!-- Info overlay (Alt / clic droit / Esc) -->
+  <!-- Info overlay (Esc / Alt / clic droit) -->
   <div id="info-overlay">
     <div class="info-frame">
 
@@ -1278,8 +1275,7 @@
 
       <!-- Footer -->
       <div class="info-footer">
-        <div class="info-tech">Three.js · Spark · SHARP (Apple) · Web Audio API · Depth Anything V2</div>
-        <div class="info-hint"><span class="hint-desktop" data-i18n="closeDesktop">ALT ou clic pour fermer</span><span class="hint-mobile" data-i18n="closeMobile">Double-tap pour fermer</span></div>
+        <div class="info-hint"><span class="hint-desktop" data-i18n="closeDesktop">ESC ou clic pour fermer</span><span class="hint-mobile" data-i18n="closeMobile">Double-tap pour fermer</span></div>
         <button class="info-credits-btn" id="credits-btn" data-i18n="creditsBtn">Crédits</button>
       </div>
 
@@ -1700,7 +1696,7 @@
   <script type="module">
     import * as THREE from "three";
     import { gs, addSparkRenderer, buildCells, SplatField } from "./splatField.js";
-    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js?v=5";
+    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js?v=6";
 
     // ═══════════════════════════════════════════════
     // DÉTECTION MOBILE + ADAPTATION QUALITÉ
@@ -2350,7 +2346,7 @@
       splatMode = on;
       if (particles) particles.visible = !on;
       sharpScenes.setVisible(on);
-      if (!on) { photoPlane.visible = false; photoW = 0; backdrop.visible = false; }
+      if (!on) { photoPlane.visible = false; photoPlaneNext.visible = false; photoW = 0; backdrop.visible = false; }
       camera.position.z = -minZoom - (-minZoom - (on ? gsCamEnd() : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
       else { lastAppliedDisparity = null; if (particles && !isTransitioning) loadImage(currentImageIndex); } // retour aux points : profondeur et couleurs à jour
@@ -2379,6 +2375,11 @@
     photoPlane.renderOrder = 10;
     photoPlane.visible = false;
     sceneGroup.add(photoPlane);
+    const photoPlaneNext = new THREE.Mesh(photoPlane.geometry,
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false, depthWrite: false, depthTest: false }));
+    photoPlaneNext.renderOrder = 11;
+    photoPlaneNext.visible = false;
+    sceneGroup.add(photoPlaneNext);
     const photoTextures = new Map();
     function photoTexture(idx) {
       if (photoTextures.has(idx)) return photoTextures.get(idx);
@@ -2419,7 +2420,9 @@
     function updatePhotoPlane() {
       // fondu court : les couleurs étant alignées, la photo et SHARP se superposent exactement au point de vue
       const PHOTO_FADE = 0.06;   // fini avant que la caméra bouge vraiment (photo posée à la profondeur médiane)
-      const flat = splatMode && zoomLevel < PHOTO_FADE && (sharpScenes.phase !== 'run');
+      const memb = sharp.frameMode === 3;
+      // membrane : la photo reste affichée pendant le changement (fondu enchaîné photo -> photo par-dessus)
+      const flat = splatMode && zoomLevel < PHOTO_FADE && (memb || sharpScenes.phase !== 'run');
       const k = Math.min(1, zoomLevel / PHOTO_FADE);
       const target = flat ? 1 - k * k * (3 - 2 * k) : 0;
       if (window.photoVolumeGS && window.photoVolumeGS.forcePhoto != null) { photoW = window.photoVolumeGS.forcePhoto; }
@@ -2432,6 +2435,12 @@
       // pliée selon la profondeur SHARP de la scène affichée
       if (photoPlane.visible && photoBentFor !== bendKey(sharpScenes.current)) bendPhoto(sharpScenes.current);
       if (photoBentFor == null || !photoBentFor.startsWith(sharpScenes.current + '|')) photoPlane.visible = false; // pas encore de carte : on attend
+      // photo suivante, en fondu par-dessus (même plan : à plat au départ, les deux photos se superposent exactement)
+      const xf = memb && splatMode ? sharpScenes.crossfade() : null;
+      const ntex = xf != null && xf > 0 ? photoTexture(sharpScenes.next) : null;
+      photoPlaneNext.visible = !!ntex && photoPlane.visible;
+      if (ntex && photoPlaneNext.material.map !== ntex) { photoPlaneNext.material.map = ntex; photoPlaneNext.material.needsUpdate = true; }
+      photoPlaneNext.material.opacity = (xf || 0) * photoW;
       return photoW;
     }
 
@@ -2485,7 +2494,7 @@
     { const c = urlParams.get('cadre'); if (c === 'fixe') sharp.frameMode = 1; else if (c === 'bords') sharp.frameMode = 2; else if (c === 'membrane') sharp.frameMode = 3; else if (c === 'origine') sharp.frameMode = 0; }
     // gs.html?mode=gs : démarrer directement en gaussiennes SHARP
     const startInGs = urlParams.get('mode') === 'gs';
-    window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, isOn: () => splatMode }; // accès console pour les tests
+    window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, renderer, isOn: () => splatMode }; // accès console pour les tests
 
     // Fonction de chargement d'image optimisée avec cache
     function loadImage(imageIndex) {
@@ -4689,6 +4698,10 @@
         gsWaitingTransition = sharpScenes.busy();
         { const now = performance.now(); if (particleParams.movement > 0) sharpTime += Math.min(0.05, (now - (window._gsLastT || now)) * 0.0006); window._gsLastT = now; } // horloge réelle : pas de saccade
         const photoWeight = updatePhotoPlane();
+        // Résolution : pleine tant que la photo nette est à l'écran ; dans le volume (flou par nature), 1 pixel
+        // par point d'écran suffit et divise par ~2 le travail de la carte graphique (sinon à-coups au scroll rapide)
+        { const pr = Math.min(window.devicePixelRatio, photoWeight > 0.02 || !sharpScenes.isReady(sharpScenes.current) ? 1.5 : 1.0);
+          if (pr !== renderer.getPixelRatio()) { renderer.setPixelRatio(pr); renderer.setSize(window.innerWidth, window.innerHeight); needsRender = true; } }
         updateBackdrop(photoWeight);
         const gsChanged = sharpScenes.update({
           photo: photoWeight,
@@ -5452,7 +5465,7 @@
         concept: "Deux séries de&nbsp;Nicolas&nbsp;Floc'h se&nbsp;rencontrent&nbsp;: les&nbsp;fonds marins d'<em>Invisible</em>, reconstruits en&nbsp;volume, prennent la&nbsp;couleur réelle de&nbsp;l'eau relevée dans <em>La&nbsp;couleur de&nbsp;l'eau</em>, profondeur par&nbsp;profondeur.",
         interaction: "Scrollez pour entrer dans l'image&nbsp;: elle se&nbsp;creuse, puis se&nbsp;défait en&nbsp;cellules. Remontez à&nbsp;la&nbsp;surface pour passer à&nbsp;la&nbsp;photographie suivante, de&nbsp;la&nbsp;côte vers le&nbsp;large.",
         sound: "Le&nbsp;son, généré en&nbsp;temps réel, suit votre plongée&nbsp;: ses&nbsp;fréquences montent à&nbsp;mesure que vous avancez.",
-        closeDesktop: 'ALT ou clic pour fermer', closeMobile: 'Double-tap pour fermer',
+        closeDesktop: 'ESC ou clic pour fermer', closeMobile: 'Double-tap pour fermer',
         creditsBtn: 'Crédits', creditsTitle: 'Crédits', creditsClose: 'Cliquez pour fermer',
         credits: "Photographies : Nicolas Floc'h, série <em>Invisible</em>,<br>commande publique Parc national des Calanques, 2018-2020.<br><br>Palette chromatique : <em>La couleur de l'eau</em>, Nicolas Floc'h,<br>FRAC Provence-Alpes-Côte d'Azur, 2020.<br><br>Reconstruction 3D : SHARP (Apple).<br><span class=\"credits-license\">Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.</span><br><br>Conception et développement : Johann Arata, 2025-2026.",
       },
@@ -5465,7 +5478,7 @@
         concept: "Two series by Nicolas&nbsp;Floc'h meet: the&nbsp;seabeds of&nbsp;<em>Invisible</em>, rebuilt in&nbsp;volume, take on the&nbsp;real colour of&nbsp;the&nbsp;water recorded in&nbsp;<em>La&nbsp;couleur de&nbsp;l'eau</em>, depth by&nbsp;depth.",
         interaction: 'Scroll to enter the&nbsp;image: it&nbsp;deepens, then dissolves into&nbsp;cells. Rise back to&nbsp;the&nbsp;surface to&nbsp;reach the&nbsp;next photograph, from the&nbsp;shore to&nbsp;the&nbsp;open sea.',
         sound: 'The&nbsp;sound, generated in&nbsp;real time, follows your dive: its&nbsp;frequencies rise as&nbsp;you go deeper.',
-        closeDesktop: 'ALT or click to close', closeMobile: 'Double-tap to close',
+        closeDesktop: 'ESC or click to close', closeMobile: 'Double-tap to close',
         creditsBtn: 'Credits', creditsTitle: 'Credits', creditsClose: 'Click to close',
         credits: "Photographs: Nicolas Floc'h, <em>Invisible</em> series,<br>public commission, Calanques National Park, 2018–2020.<br><br>Colour palette: <em>La couleur de l'eau</em>, Nicolas Floc'h,<br>FRAC Provence-Alpes-Côte d'Azur, 2020.<br><br>3D reconstruction: SHARP (Apple).<br><span class=\"credits-license\">Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.</span><br><br>Design and development: Johann Arata, 2025–2026.",
       },
@@ -5550,7 +5563,9 @@
     function setCursorVisible() {
       customCursor.style.opacity = '';
       const inScene = !clickGateActive && !landingActive && !introActive;
-      customCursor.classList.toggle('visible', cursorInWindow && inScene && infoOverlay.classList.contains('visible'));
+      const on = cursorInWindow && inScene && infoOverlay.classList.contains('visible');
+      customCursor.classList.toggle('visible', on);
+      document.documentElement.classList.toggle('cc-on', on);   // le curseur normal reste tant que le personnalisé n'est pas là
     }
 
     // Couleur du curseur basée sur la couleur dominante (surface) du gradient Floc'h de l'image
@@ -5642,14 +5657,10 @@
         }
         return;
       }
-      // Alt → toggle info overlay / Esc → fermer
-      if (event.key === 'Alt') {
+      // Échap ou Alt → ouvre / ferme le texte (info overlay)
+      if (event.key === 'Escape' || event.key === 'Alt') {
         event.preventDefault();
-        toggleInfoOverlay();
-        return;
-      }
-      if (event.key === 'Escape' && infoOverlay.classList.contains('visible')) {
-        toggleInfoOverlay(false);
+        if (!event.repeat) toggleInfoOverlay();
         return;
       }
 

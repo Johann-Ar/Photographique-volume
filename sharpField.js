@@ -60,10 +60,20 @@ const GLSL = (o, i) => `
     z = 1.0 + (zf - 1.0) * e;
     float gx = 6.0 * dx * (1.0 - dx) / bw * sy, gy = 6.0 * dy * (1.0 - dy) / bw * sx;
     float slope = abs(zf - 1.0) * ${i.memb} * 0.975 * length(vec2(gx, gy));
-    mstretch = min(sqrt(1.0 + slope * slope / (z * z)), 4.0);
+    mstretch = min(sqrt(1.0 + slope * slope / (z * z)), 6.0);
   }
   ${o.gsplat}.center *= z / z0;
-  ${o.gsplat}.scales *= z / z0 * mstretch;
+  ${o.gsplat}.scales *= z / z0;
+  // pente de la membrane vers ses épingles : seul l'axe le plus fin (≈ la profondeur, les gaussiennes SHARP
+  // sont des disques face à l'objectif) s'allonge pour boucher les trous vus de biais ; vue de face rien ne change
+  // et l'image ne s'élargit pas (avant : les 3 axes grossissaient -> matière floue sur les côtés du cadre)
+  if (mstretch > 1.0) {
+    vec3 sc = ${o.gsplat}.scales;
+    if (sc.x <= sc.y && sc.x <= sc.z) sc.x *= mstretch;
+    else if (sc.y <= sc.z) sc.y *= mstretch;
+    else sc.z *= mstretch;
+    ${o.gsplat}.scales = sc;
+  }
   float fi = float(${i.gsplat}.index);
   float h = fract(sin(fi * 12.9898) * 43758.5453);
   float h2 = fract(sin(fi * 78.233) * 12543.1);
@@ -73,7 +83,7 @@ const GLSL = (o, i) => `
   ${o.gsplat}.center.xy += (vec2(h2, h3) - 0.5) * 1.2 * z / 1288.0 * clamp(${i.t} * 4.0, 0.0, 1.0);
   // cellules : la gaussienne s'arrondit en partie, sans changer de volume
   float g = pow(max(${i.gsplat}.scales.x * ${i.gsplat}.scales.y * ${i.gsplat}.scales.z, 1e-30), 1.0 / 3.0);
-  ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0 * mstretch), ${i.rnd}) * ${i.size};
+  ${o.gsplat}.scales = mix(${o.gsplat}.scales, vec3(g * z / z0), ${i.rnd}) * ${i.size};
   // au fond du scroll : taille plafonnée (≈ 1,6 pixel de la photo) -> plein de petites cellules nettes au lieu du flou
   float cap = mix(1000.0, 2.2 * z / 1288.0, ${i.prog});
   ${o.gsplat}.scales = min(${o.gsplat}.scales, vec3(cap));
@@ -154,6 +164,8 @@ function makeLayer(url, isMol) {
 // Changement de photo automatique, sans chevauchement :
 // pause sur la photo -> dissolution en cellules -> noir -> la nouvelle photo se recompose
 export const TRANSITION = { wait: 600, out: 800, black: 250, in: 800 }; // millisecondes
+// membrane : le changement se fait en fondu enchaîné de photo à photo (gs.html), plus court, sans noir
+export const TRANSITION_MEMB = { wait: 200, out: 550, black: 0, in: 550 };
 
 // Grille de profondeur (GW x GH) vue depuis le point de vue SHARP : pour chaque case, la profondeur de la
 // matière visible (25e centile des gaussiennes qui s'y projettent = surface la plus proche), lissée.
@@ -285,6 +297,13 @@ export class SharpScenes {
   show(i) { this.current = i; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(); this._apply(); }
 
   // Lancer le changement de photo (automatique, chronométré)
+  // Avancement du fondu enchaîné de la photo 2D (mode membrane) : 0 -> 1 pendant la transition, null sinon
+  crossfade() {
+    if (this.next == null) return null;
+    const T = TRANSITION_MEMB, x = (performance.now() - this.t0 - T.wait) / (T.out + T.black + T.in);
+    const k = Math.min(1, Math.max(0, x));
+    return k * k * (3 - 2 * k);
+  }
   startTransition(i) {
     if (i === this.current || this.next != null) return;
     this.next = i; this._keep(); this.t0 = performance.now();
@@ -324,7 +343,7 @@ export class SharpScenes {
   // Avance la transition selon le temps (pas le scroll)
   _tick() {
     if (this.next == null) { this.phase = 'idle'; return; }
-    const T = TRANSITION, e = performance.now() - this.t0;
+    const T = sharp.frameMode === 3 ? TRANSITION_MEMB : TRANSITION, e = performance.now() - this.t0;
     this.phase = e < T.wait ? 'wait' : 'run';
     const ready = this.isReady(this.next);
     if (e < T.wait) { this.fadeCur = 1; this.fadeNext = 0; }
@@ -341,7 +360,7 @@ export class SharpScenes {
     let changed = this.busy();
     this.photoW = photo;
     this.camObj = (D - cameraZ) / D;          // caméra dans le repère des fichiers (0 = point de vue SHARP)
-    shared.camZ.value = Math.round(this.camObj * 100) / 100;
+    shared.camZ.value = Math.round(this.camObj * 500) / 500;   // pas fins : pas de petits sauts visibles au scroll
     shared.camF.value = this.camObj;          // valeur exacte pour le cadre (sinon il grandit par à-coups)
     shared.frame.value = sharp.frameMode;
     shared.band.value = sharp.frameBand;
@@ -352,7 +371,7 @@ export class SharpScenes {
     shared.time.value = time;
     const x = Math.min(1, Math.max(0, (disparity / 7 - sharp.cellFrom) / (sharp.cellTo - sharp.cellFrom)));
     this.cellW = x * x;       // progressif
-    shared.cellR.value = Math.round(this.cellW * 100) / 100;
+    shared.cellR.value = Math.round(this.cellW * 500) / 500;
     this._tick();
     this._apply();
     const p = Math.pow(Math.min(1, Math.max(0, disparity / 7)), sharp.curve); // 0 au départ, 1 au fond
@@ -368,7 +387,7 @@ export class SharpScenes {
       s.base.u.zr.value = zr; s.mol.u.zr.value = zr;
       const zn = Math.min(zr, this.photoDepth(i) * sharp.frameNear); s.base.u.zn.value = zn; s.mol.u.zn.value = zn;
     }
-    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, sharp.frameMode ? this.camObj.toFixed(4) : 0, sharp.frameMode === 3 ? shared.memb.value + '/' + sharp.membraneBand : 0].join("|");   // membrane : seulement dans ce mode (sinon recalculs inutiles au scroll)
+    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, (sharp.frameMode === 1 || sharp.frameMode === 2) ? this.camObj.toFixed(4) : 0, sharp.frameMode === 3 ? shared.memb.value + '/' + sharp.membraneBand : 0].join("|");   // membrane : seulement dans ce mode (sinon recalculs inutiles au scroll)
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? Math.floor(performance.now() / 33) : "0");   // mouvement : 30 recalculs / s au plus
