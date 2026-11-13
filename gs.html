@@ -2456,8 +2456,11 @@
       backdrop.scale.set(2 * 25 * HALF_U * zr, 2 * 25 * HALF_V * zr, 1);
     }
 
-    // Touche G : bascule Points <-> Gaussiennes SHARP, à tout moment
+    // Touche G : bascule Points <-> Gaussiennes SHARP (une fois l'accueil passé)
     window.addEventListener('keydown', (e) => {
+      // pas pendant l'accueil, ni avec Cmd/Ctrl/Alt (copier, etc.), ni quand on tape dans un champ
+      if (landingActive || introActive || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
       if (e.key === 'g' || e.key === 'G') setSplatMode(!splatMode);
       // Touche E : active / désactive la membrane élastique (mode 3)
       if ((e.key === 'e' || e.key === 'E') && !e.repeat) {
@@ -2465,8 +2468,9 @@
         console.log('[Cadre]', ['origine', 'fixe', 'bords', 'membrane'][sharp.frameMode]);
         needsResizeRender = true;
       }
-      // Touche C : cadre d'origine -> cadre fixe -> seuls les bords coupés -> membrane
-      if (e.key === 'c' || e.key === 'C') {
+      // Touche F : cadre d'origine -> cadre fixe -> seuls les bords coupés -> membrane
+      // (C est déjà pris par la capture d'écran)
+      if ((e.key === 'f' || e.key === 'F') && !e.repeat) {
         sharp.frameMode = (sharp.frameMode + 1) % 4;
         console.log('[Cadre]', ['origine', 'fixe', 'bords', 'membrane'][sharp.frameMode]);
         needsResizeRender = true;
