@@ -858,6 +858,48 @@
     #click-gate .click-gate-text {
       cursor: pointer !important;
     }
+    /* Chargement (gs.html) : une ligne qui descend, comme une sonde dans la colonne d'eau, puis ENTRER */
+    #click-gate.loading .click-gate-text, #click-gate.loading .click-gate-hint { animation: none; opacity: 0; pointer-events: none; }
+    #click-gate.loading .click-gate-text { cursor: default !important; }
+    .gate-loader {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      display: flex; flex-direction: column; align-items: center; gap: 26px;
+      pointer-events: none; user-select: none;
+      opacity: 0;
+      animation: gateLoaderIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.15s forwards;
+    }
+    #click-gate:not(.loading) .gate-loader { animation: gateLoaderOut 0.7s cubic-bezier(0.25, 0.1, 0.25, 1) forwards; }
+    @keyframes gateLoaderIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes gateLoaderOut { from { opacity: 1; } to { opacity: 0; } }
+    .gate-loader-line {
+      position: relative; width: 1px; height: 84px;
+      background: rgba(255,255,255,0.10);
+      overflow: hidden;
+    }
+    .gate-loader-fill {
+      position: absolute; inset: 0;
+      background: linear-gradient(to bottom, rgba(255,255,255,0.15), rgba(255,255,255,0.9));
+      transform-origin: top center;
+      transform: scaleY(0);
+      transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
+    .gate-loader-glint {
+      position: absolute; left: 0; width: 1px; height: 18px; top: -18px;
+      background: linear-gradient(to bottom, rgba(120,170,255,0), rgba(160,200,255,0.95), rgba(120,170,255,0));
+      animation: gateLoaderGlint 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+      will-change: transform;
+    }
+    @keyframes gateLoaderGlint { from { transform: translateY(0); } to { transform: translateY(120px); } }
+    .gate-loader-label {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 10px; font-weight: 300; letter-spacing: 0.32em; text-transform: uppercase;
+      padding-left: 0.32em;
+      color: rgba(255,255,255,0.45);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
     .click-gate-text {
       font-family: 'Instrument Serif', Georgia, serif;
       font-weight: 400;
@@ -893,9 +935,9 @@
       animation: clickGateTextOut 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     }
     @keyframes clickGateFadeOut {
-      0%   { background: rgba(0,0,0,1); }
-      40%  { background: rgba(0,0,0,1); }
-      100% { background: rgba(0,0,0,0); }
+      0%   { opacity: 1; }
+      40%  { opacity: 1; }
+      100% { opacity: 0; }
     }
     @keyframes clickGateTextOut {
       0%   { opacity: 1; transform: scale(1); }
@@ -903,6 +945,8 @@
       100% { opacity: 0; transform: scale(1.15); }
     }
 
+    /* gs.html : pages pas encore atteintes hors du rendu (sinon composées à chaque image derrière la porte) */
+    #landing-page:not(.shown), #intro-page:not(.active) { display: none !important; }
     #landing-page {
       position: fixed;
       inset: 0;
@@ -1046,9 +1090,9 @@
       animation: landingBgFade 1.8s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
     }
     @keyframes landingBgFade {
-      0%   { background: rgba(0,0,0,1); }
-      60%  { background: rgba(0,0,0,1); }
-      100% { background: rgba(0,0,0,0); }
+      0%   { opacity: 1; }
+      60%  { opacity: 1; }
+      100% { opacity: 0; }
     }
 
     /* ═══════════════════════════════════════════════
@@ -1191,7 +1235,11 @@
   </svg>
   <!-- Page d'accueil -->
   <!-- Page d'entrée click-gate (user gesture pour AudioContext) -->
-  <div id="click-gate">
+  <div id="click-gate" class="loading">
+    <div class="gate-loader" aria-hidden="true">
+      <div class="gate-loader-line"><div class="gate-loader-fill" id="gate-loader-fill"></div><div class="gate-loader-glint"></div></div>
+      <div class="gate-loader-label"><span data-i18n="loading">Chargement</span>&ensp;<span id="gate-loader-pct">0 %</span></div>
+    </div>
     <div class="click-gate-text" data-i18n="enter">ENTRER</div>
     <div class="click-gate-hint" data-i18n="enterHint">cliquer</div>
   </div>
@@ -1728,6 +1776,7 @@
       // r128 n'appliquait pas de conversion sRGB en sortie : on garde ce rendu pour conserver les couleurs d'origine
       renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
       document.body.appendChild(renderer.domElement);
+      renderer.domElement.style.visibility = 'hidden';   // gs.html : caché sous la porte, l'accueil et l'intro (rien à composer), montré à l'entrée dans l'image
     } catch (error) {
       console.error('WebGL error:', error);
       document.body.innerHTML = '<div style="color: white; padding: 20px; font-family: Arial;">WebGL n\'est pas disponible. Essayez de rafraîchir la page (Ctrl+F5) ou redémarrez votre navigateur.</div>';
@@ -1981,6 +2030,7 @@
       square: null
     };
     let imagesPreloaded = false;
+    let preloadCount = 0;   // photos préparées (écran de chargement)
 
     // Poids du moteur hybride depth map + luminance (v4)
     let depthMacroWeight = 0.9;   // Poids de la depth map (séparation des grands plans)
@@ -2224,9 +2274,13 @@
         const imgData = tempContext.getImageData(0, 0, targetWidth, targetHeight);
         imageCache.set(idx, imgData);
 
-        const { colors, depths } = extractColorsAndDepths(imgData, targetWidth, targetHeight, idx);
-        colorCache.set(idx, colors);
-        depthCache.set(idx, depths);
+        // gs.html : couleurs/profondeurs des points calculées seulement si on repasse en points (lourd, inutile en gaussiennes)
+        if (!startInGs) {
+          const { colors, depths } = extractColorsAndDepths(imgData, targetWidth, targetHeight, idx);
+          colorCache.set(idx, colors);
+          depthCache.set(idx, depths);
+        }
+        preloadCount++;
       }
 
       // Charger une image avec promesse (résout true si chargée, false sinon)
@@ -2999,9 +3053,68 @@
         onReady();
       });
     }
-    if (!document.getElementById('click-gate')) {
-      startPreload();
-    }
+    // gs.html : tout se prépare AVANT « ENTRER », derrière l'écran de chargement (voir watchLoading),
+    // pour que l'accueil et l'intro ne fassent plus que leurs animations
+    startPreload();
+    // Écran de chargement : photos (30 %), puis la scène affichée et la suivante (couches lisse et cellules),
+    // puis leurs photos colorées envoyées à la carte graphique et les shaders compilés. Alors seulement : ENTRER.
+    (function watchLoading() {
+      const gate = document.getElementById('click-gate');
+      if (!gate) return;
+      const fill = document.getElementById('gate-loader-fill'), pct = document.getElementById('gate-loader-pct');
+      const t0 = performance.now();
+      let shown = 0, finishing = false, polls = 0, audioState = 0;   // son : 0 pas lancé, 1 en cours, 2 prêt
+      const meshesReady = () => {
+        if (!splatMode || sharpScenes.current == null) return 0;
+        const ids = [sharpScenes.current, (sharpScenes.current % sharpScenes.count) + 1];
+        let n = 0;
+        for (const i of ids) { const sc = sharpScenes.scenes.get(i); if (sc) n += (sc.base.mesh.isInitialized ? 1 : 0) + (sc.mol.mesh.isInitialized ? 1 : 0); }
+        return n;
+      };
+      const finish = () => {
+        finishing = true;
+        // préparer ce que l'arrivée sur la photo utilisera (sinon calculé au moment où l'image apparaît)
+        try {
+          const cur = sharpScenes.current, nxt = (cur % sharpScenes.count) + 1;
+          for (const i of [cur, nxt]) { const t = photoTexture(i); if (t) renderer.initTexture(t); }
+          renderer.compile(scene, camera);
+          needsResizeRender = true;
+        } catch (e) { console.warn('[Chargement] préparation', e); }
+        setProgress(1);
+        setTimeout(() => gate.classList.remove('loading'), 650);   // la ligne finit de descendre, puis ENTRER
+      };
+      function setProgress(p) {
+        p = Math.max(shown, Math.min(1, p));
+        if (p === shown && p < 1) return;
+        shown = p;
+        if (fill) fill.style.transform = 'scaleY(' + p.toFixed(3) + ')';
+        if (pct) pct.textContent = Math.round(p * 100) + '\u202f%';
+      }
+      let fontsReady = false;
+      if (document.fonts && document.fonts.load) {
+        Promise.all(['400 20px "Instrument Serif"', 'italic 400 20px "Instrument Serif"', '300 16px "Space Grotesk"',
+          '400 16px "Space Grotesk"', '500 16px "Space Grotesk"', '600 16px "Space Grotesk"'].map((f) => document.fonts.load(f)))
+          .then(() => { fontsReady = true; }, () => { fontsReady = true; });
+        setTimeout(() => { fontsReady = true; }, 8000);   // jamais bloqué par les polices
+      } else fontsReady = true;
+      (function poll() {
+        if (finishing) return;
+        // le son (déclaré plus bas dans le script) se prépare une fois les photos prêtes, sans gêner leur traitement
+        if (polls++ > 0 && audioState === 0 && imagesPreloaded) {
+          audioState = 1;
+          AudioEngine.prepare(2).then(() => { audioState = 2; }, () => { audioState = 2; });
+        }
+        const imgs = Math.min(1, preloadCount / 7);
+        // ancienne version en points (?mode=points) : pas de scène SHARP à attendre
+        const m = startInGs ? meshesReady() : (particles ? 4 : 0);
+        const grid = !startInGs || (splatMode && sharpScenes.depthGrid(sharpScenes.current)) ? 1 : 0;
+        setProgress(0.3 * imgs + 0.55 * (m / 4) + 0.05 * grid + 0.1 * (audioState === 2 ? 1 : 0));
+        const ready = imagesPreloaded && m === 4 && grid && audioState === 2 && fontsReady;
+        // filet de sécurité : jamais bloqué plus de 40 s (connexion lente, fichier manquant)
+        if (ready || performance.now() - t0 > 40000) finish();
+        else setTimeout(poll, 120);
+      })();
+    })();
 
     // Position de la caméra (mobile) et sceneGroup (fixe)
     camera.position.set(0, 0, 25); // Caméra commence loin en arrière
@@ -3292,6 +3405,12 @@
         }
       };
 
+      // gs.html : les bruits et réverbérations sont calculés une fois (pendant l'écran de chargement, voir prepare)
+      // et réutilisés ; avant, ils étaient recalculés au clic, à l'entrée dans l'image et à chaque souffle (à-coups)
+      const bufCache = new Map();
+      function cachedBuf(key, make) { if (!bufCache.has(key)) bufCache.set(key, make()); return bufCache.get(key); }
+      let prebuiltTheme = null;
+
       // Bruit brownien (plus naturel, plus chaud que le blanc)
       // -6dB/octave — sonne comme le fond de l'océan
       function createBrownNoiseBuffer(duration = 4) {
@@ -3431,11 +3550,12 @@
         warmth.curve = makeWarmCurve(T.warmDrive);
 
         // Nouvelle reverb pour ce thème
-        convolver.buffer = createReverbIR(T.reverbDuration, T.reverbDecay);
+        const ir = cachedBuf('ir|' + T.reverbDuration + '|' + T.reverbDecay, () => createReverbIR(T.reverbDuration, T.reverbDecay));
+        if (convolver.buffer !== ir) convolver.buffer = ir;
 
         // Buffers de bruit
-        const brownBuf = createBrownNoiseBuffer(4);
-        const pinkBuf = createPinkNoiseBuffer(4);
+        const brownBuf = cachedBuf('brown4', () => createBrownNoiseBuffer(4));
+        const pinkBuf = cachedBuf('pink4', () => createPinkNoiseBuffer(4));
 
         // === DRONE: oscillateurs désaccordés avec harmoniques naturelles ===
         const droneGain = ctx.createGain();
@@ -3930,7 +4050,8 @@
         if (!isInitialized) init();
         currentTheme = Math.max(1, Math.min(5, themeNum));
         const T = THEMES[currentTheme];
-        buildTheme(currentTheme);
+        if (!(prebuiltTheme === currentTheme && layers.drone)) buildTheme(currentTheme);   // déjà préparé au chargement
+        prebuiltTheme = null;
 
         function applyGainRamp() {
           const now = ctx.currentTime;
@@ -4013,11 +4134,7 @@
         }
       }
 
-      function _fireDismissWhoosh() {
-        const now = ctx.currentTime;
-        const duration = 1.8; // Durée de l'animation CSS de dismiss
-
-        // Bruit rose one-shot
+      function whooshBuf() { return cachedBuf('whoosh', () => {
         const length = ctx.sampleRate * 3;
         const buf = ctx.createBuffer(2, length, ctx.sampleRate);
         for (let ch = 0; ch < 2; ch++) {
@@ -4032,6 +4149,15 @@
             b6 = w*0.115926;
           }
         }
+        return buf;
+        }); }
+
+      function _fireDismissWhoosh() {
+        const now = ctx.currentTime;
+        const duration = 1.8; // Durée de l'animation CSS de dismiss
+
+        // Bruit rose one-shot (calculé une fois)
+        const buf = whooshBuf();
         const src = ctx.createBufferSource();
         src.buffer = buf;
         src.loop = false;
@@ -4081,8 +4207,31 @@
         }, (duration + 0.5) * 1000);
       }
 
+      // Préparer le son pendant le chargement : contexte créé (suspendu jusqu'au clic), bruits et réverbération
+      // calculés, couches du thème d'arrivée construites. Une étape par tâche. Résout quand tout est prêt.
+      function prepare(themeNum) {
+        const steps = [
+          () => init(),
+          () => { const T = THEMES[themeNum]; cachedBuf('ir|' + T.reverbDuration + '|' + T.reverbDecay, () => createReverbIR(T.reverbDuration, T.reverbDecay)); },
+          () => cachedBuf('brown4', () => createBrownNoiseBuffer(4)),
+          () => cachedBuf('pink4', () => createPinkNoiseBuffer(4)),
+          () => whooshBuf(),
+          () => { if (!isActive) { buildTheme(themeNum); prebuiltTheme = themeNum; } },
+        ];
+        return new Promise((resolve) => {
+          const run = () => {
+            const f = steps.shift();
+            if (!f) return resolve();
+            try { f(); } catch (e) { console.warn('[Audio] préparation', e); steps.length = 0; return resolve(); }
+            setTimeout(run, 0);
+          };
+          setTimeout(run, 0);
+        });
+      }
+
       return {
         init,
+        prepare,
         cycle,
         startAt,
         mute,
@@ -4920,7 +5069,9 @@
 
     function dismissClickGate() {
       if (!clickGateActive || !clickGate) return;
+      if (clickGate.classList.contains('loading')) return;   // pas avant la fin du chargement
       clickGateActive = false;
+      if (landingPage) landingPage.classList.add('shown');  // l'accueil apparaît sous la porte qui s'efface
       // CE CLIC EST UN USER GESTURE VALIDE → initialiser l'AudioContext immédiatement
       AudioEngine.init();
       AudioEngine.ensureContextRunning();
@@ -4938,8 +5089,6 @@
         // Lancer le landing immédiatement (le preload continue en arrière-plan)
         showLanding();
       }, 1700);
-      // LANCER LE CHARGEMENT DES IMAGES maintenant (après le clic, pas avant)
-      startPreload();
     }
 
     if (clickGate) {
@@ -4950,6 +5099,7 @@
           window.removeEventListener('keydown', _clickGateKey);
           return;
         }
+        if (clickGate.classList.contains('loading')) return;
         dismissClickGate();
         window.removeEventListener('keydown', _clickGateKey);
       });
@@ -5049,6 +5199,8 @@
       // Son de transition whoosh (accompagne l'animation de zoom-out)
       AudioEngine.playDismissWhoosh();
       landingPage.classList.add('dismissing');
+      // gs.html : la scène se met en place sous l'intro (noire, opaque), pas au moment où l'image apparaît
+      setTimeout(() => { renderer.domElement.style.visibility = ''; needsResizeRender = true; }, 1900);
       // Activate intro immediately (it's already visible behind landing)
       introPage.classList.add('active');
       introActive = true;
@@ -5074,6 +5226,7 @@
       zoomLevel = 0;
       currentAppliedDisparity = 0;
       introPage.classList.add('dismissing');
+      renderer.domElement.style.visibility = '';   // (déjà fait sous l'intro, sauf passage très rapide)
       // gs.html : on arrive sur les photos avec la caméra centrée, quoi qu'ait fait la souris avant
       if (window.recenterLook) window.recenterLook();
       dragTargetX = dragTargetY = dragCurrentX = dragCurrentY = dragVelocityX = dragVelocityY = 0;
@@ -5457,7 +5610,7 @@
     // === LANGUE (FR / EN) ===
     const I18N = {
       fr: {
-        enter: 'ENTRER', enterHint: 'cliquer',
+        enter: 'ENTRER', enterHint: 'cliquer', loading: 'Chargement',
         subtitle: "Entrer dans la profondeur<br>des paysages immergés.",
         intro1: "D'après la série <em>Invisible</em><br>de Nicolas Floc'h,<br>Calanques, 2018-2020.",
         intro2: "Des fonds marins en noir et blanc,<br>teintés par la colonne d'eau.<br>La profondeur donne la couleur,<br>la lumière le volume.",
@@ -5470,7 +5623,7 @@
         credits: "Photographies : Nicolas Floc'h, série <em>Invisible</em>,<br>commande publique Parc national des Calanques, 2018-2020.<br><br>Palette chromatique : <em>La couleur de l'eau</em>, Nicolas Floc'h,<br>FRAC Provence-Alpes-Côte d'Azur, 2020.<br><br>Reconstruction 3D : SHARP (Apple).<br><span class=\"credits-license\">Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.</span><br><br>Conception et développement : Johann Arata, 2025-2026.",
       },
       en: {
-        enter: 'ENTER', enterHint: 'click',
+        enter: 'ENTER', enterHint: 'click', loading: 'Loading',
         subtitle: 'Step into the depth<br>of submerged landscapes.',
         intro1: "After the series <em>Invisible</em><br>by Nicolas Floc'h,<br>Calanques, 2018–2020.",
         intro2: 'Black-and-white seabeds,<br>tinted by the water column.<br>Depth gives the colour,<br>light the volume.',
