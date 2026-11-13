@@ -8,7 +8,7 @@
   <meta property="og:title" content="Volume Photographique">
   <meta property="og:description" content="Paysages sous-marins des Calanques traduits en sculptures de particules navigables">
   <meta property="og:type" content="website">
-  <title>Volume Photographique — Gaussiennes</title>
+  <title>Volume Photographique</title>
   <link rel="icon" type="image/png" href="Ressources/favicon.png">
   <link rel="apple-touch-icon" sizes="180x180" href="Ressources/favicon.png">
   <style>
@@ -2492,8 +2492,8 @@
     // paramètres de l'adresse : un « ? » en trop (gs.html?mode=gs?cadre=membrane) compte comme un « & »
     const urlParams = new URLSearchParams(location.search.slice(1).replace(/\?/g, '&'));
     { const c = urlParams.get('cadre'); if (c === 'fixe') sharp.frameMode = 1; else if (c === 'bords') sharp.frameMode = 2; else if (c === 'membrane') sharp.frameMode = 3; else if (c === 'origine') sharp.frameMode = 0; }
-    // gs.html?mode=gs : démarrer directement en gaussiennes SHARP
-    const startInGs = urlParams.get('mode') === 'gs';
+    // Démarre en gaussiennes SHARP (version principale) ; gs.html?mode=points : ancienne version en points
+    const startInGs = urlParams.get('mode') !== 'points';
     window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, renderer, isOn: () => splatMode }; // accès console pour les tests
 
     // Fonction de chargement d'image optimisée avec cache
