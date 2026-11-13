@@ -5565,7 +5565,9 @@
       const inScene = !clickGateActive && !landingActive && !introActive;
       const on = cursorInWindow && inScene && infoOverlay.classList.contains('visible');
       customCursor.classList.toggle('visible', on);
-      document.documentElement.classList.toggle('cc-on', on);   // le curseur normal reste tant que le personnalisé n'est pas là
+      // Curseur classique : seulement au début (porte, accueil, intro). Dans la scène,
+      // jamais de curseur classique : le curseur perso avec l'interface texte, rien sans elle.
+      document.documentElement.classList.toggle('cc-on', inScene);
     }
 
     // Couleur du curseur basée sur la couleur dominante (surface) du gradient Floc'h de l'image
