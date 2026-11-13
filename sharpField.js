@@ -20,8 +20,8 @@ export const sharp = {
   progress: 0,      // avancement de la dégradation (0..1), lu par gs.html pour le bord des cellules
   depthGamma: 0.6,  // CADRE : 1 = profondeur SHARP d'origine ; plus petit = fond plus plat, cadre plus stable
   curve: 3,         // DÉGRADATION : exposant ; plus grand = net plus longtemps, puis dispersion rapide à la fin
-  frameMode: 0,     // CADRE : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés, 3 = membrane élastique (gs.html?cadre=fixe|bords|membrane, touche C)
-  membraneBand: 0.7, // mode 3 : largeur de la zone où la membrane remonte vers ses épingles (part de la demi-hauteur de la photo)
+  frameMode: 3,     // CADRE (3 = membrane, mode principal) : 0 = d'origine, 1 = cadre fixe (rien ne sort), 2 = seuls les bords sont coupés, 3 = membrane élastique (gs.html?cadre=origine|fixe|bords|membrane, touche F)
+  membraneBand: 0.5, // mode 3 : largeur de la zone où la membrane remonte vers ses épingles (part de la demi-hauteur de la photo)
   membraneDepth: 1,  // mode 3 : enfoncement maximal (1 = relief SHARP complet au fond du scroll)
   frameBand: 0.15,  // mode 2 : largeur de la bande « bord » (part de la demi-hauteur de la photo)
   frameNear: 1,     // mode 2 : seul le volume plus proche que frameNear x profondeur médiane peut déborder (le fond reste dans le cadre)
@@ -33,7 +33,7 @@ export const sharp = {
 // scène 3D est la photo, nette. Le scroll fait avancer la caméra dans la scène (le relief se révèle).
 // Le plan proche (z = 1 dans les fichiers) arrive à z = 0, comme les points.
 const D = 25;
-const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0), camF: dyno.dynoFloat(0), frame: dyno.dynoFloat(0), band: dyno.dynoFloat(0.15), memb: dyno.dynoFloat(0), mband: dyno.dynoFloat(0.7) };
+const shared = { t: dyno.dynoFloat(0), time: dyno.dynoFloat(0), round: dyno.dynoFloat(0.5), gamma: dyno.dynoFloat(0.6), prog: dyno.dynoFloat(0), camZ: dyno.dynoFloat(0), cellR: dyno.dynoFloat(0), camF: dyno.dynoFloat(0), frame: dyno.dynoFloat(0), band: dyno.dynoFloat(0.15), memb: dyno.dynoFloat(0), mband: dyno.dynoFloat(0.5) };
 
 const GLSL = (o, i) => `
   ${o.gsplat} = ${i.gsplat};
@@ -48,14 +48,18 @@ const GLSL = (o, i) => `
   vec2 uvm = ${i.gsplat}.center.xy / z0;
   float mstretch = 1.0;
   if (${i.frame} > 2.5) {
+    // fenêtre lisse (produit horizontal x vertical) : pas de pli en diagonale depuis les coins, contrairement à min()
     float bw = max(${i.mband} * 0.300, 1e-4);
-    float dm = clamp(min(0.587 - abs(uvm.x), 0.300 - abs(uvm.y)) / bw, 0.0, 1.0);
-    float wm = dm * dm * (3.0 - 2.0 * dm);
+    float dx = clamp((0.587 - abs(uvm.x)) / bw, 0.0, 1.0), dy = clamp((0.300 - abs(uvm.y)) / bw, 0.0, 1.0);
+    float sx = dx * dx * (3.0 - 2.0 * dx), sy = dy * dy * (3.0 - 2.0 * dy);
+    float wm = sx * sy;
+    // un léger relief reste toujours (2,5 %) : invisible, mais garde l'ordre avant / arrière des gaussiennes
+    // (toutes sur un même plan, le tri se fait au hasard et le fond caché transparaît en taches sombres)
+    float e = ${i.memb} * wm * 0.975 + 0.025;
     float zf = z;
-    z = 1.0 + (zf - 1.0) * ${i.memb} * wm;
-    // là où la membrane remonte vers ses épingles, la surface est en pente raide : on élargit
-    // les gaussiennes d'autant pour que la matière reste continue (pas de trous vus de biais)
-    float slope = abs(zf - 1.0) * ${i.memb} * 6.0 * dm * (1.0 - dm) / bw;
+    z = 1.0 + (zf - 1.0) * e;
+    float gx = 6.0 * dx * (1.0 - dx) / bw * sy, gy = 6.0 * dy * (1.0 - dy) / bw * sx;
+    float slope = abs(zf - 1.0) * ${i.memb} * 0.975 * length(vec2(gx, gy));
     mstretch = min(sqrt(1.0 + slope * slope / (z * z)), 4.0);
   }
   ${o.gsplat}.center *= z / z0;
@@ -268,6 +272,13 @@ export class SharpScenes {
   // Profondeur (compressée) du plan du cadre pour la photo i
   frameDepth(i) { const s = this.scenes.get(i); return Math.pow(Math.max((s && s.zFar) || 1.5, 0.05), sharp.depthGamma) * sharp.frameDepthMul; }
   depthGrid(i) { const s = this.scenes.get(i); return s && s.depthGrid ? s.depthGrid : null; }
+  // Profondeur de la membrane (mode 3) au point (u, v) de la photo, pour une profondeur compressée zc : même calcul que les gaussiennes
+  membraneZ(zc, u, v) {
+    const bw = Math.max(sharp.membraneBand * 0.3, 1e-4), ss = (d) => { d = Math.min(1, Math.max(0, d)); return d * d * (3 - 2 * d); };
+    const wm = ss((0.587 - Math.abs(u)) / bw) * ss((0.3 - Math.abs(v)) / bw);
+    return 1 + (zc - 1) * (shared.memb.value * wm * 0.975 + 0.025);
+  }
+  membValue() { return shared.memb.value; }
   photoDepth(i) { const s = this.scenes.get(i); return s && s.zMedian ? Math.pow(Math.max(1, s.zMedian), sharp.depthGamma) : 1; }
 
   // Image affichée tout de suite (chargement, flèches, retour aux gaussiennes)
@@ -357,7 +368,7 @@ export class SharpScenes {
       s.base.u.zr.value = zr; s.mol.u.zr.value = zr;
       const zn = Math.min(zr, this.photoDepth(i) * sharp.frameNear); s.base.u.zn.value = zn; s.mol.u.zn.value = zn;
     }
-    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, sharp.frameMode ? this.camObj.toFixed(4) : 0, sharp.frameMode === 3 ? shared.memb.value + '/' + sharp.membraneBand : 0]   // membrane : seulement dans ce mode (sinon recalculs inutiles au scroll).join("|");
+    const common = [shared.camZ.value.toFixed(3), shared.cellR.value.toFixed(3), shared.round.value.toFixed(3), sharp.depthGamma, this.fadeCur.toFixed(3), this.fadeNext.toFixed(3), sharp.molSize, sharp.frameMode, sharp.frameBand, sharp.frameDepthMul, sharp.frameNear, sharp.frameMode ? this.camObj.toFixed(4) : 0, sharp.frameMode === 3 ? shared.memb.value + '/' + sharp.membraneBand : 0].join("|");   // membrane : seulement dans ce mode (sinon recalculs inutiles au scroll)
     for (const [, s] of this.scenes) for (const l of [s.base, s.mol]) {
       if (!l.mesh.visible || !l.mesh.isInitialized) continue;
       const key = common + "|" + (l.u.move.value > 0 ? Math.floor(performance.now() / 33) : "0");   // mouvement : 30 recalculs / s au plus

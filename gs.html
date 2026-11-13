@@ -1700,7 +1700,7 @@
   <script type="module">
     import * as THREE from "three";
     import { gs, addSparkRenderer, buildCells, SplatField } from "./splatField.js";
-    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js";
+    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js?v=5";
 
     // ═══════════════════════════════════════════════
     // DÉTECTION MOBILE + ADAPTATION QUALITÉ
@@ -2399,18 +2399,21 @@
     let photoW = 0, photoBentFor = null;
     // Plie la photo : sommet (colonne i, ligne j) = point du rayon de vue (u, v) à la profondeur SHARP de la case.
     // Vu depuis l'œil (z = 25), la photo reste exactement plate ; quand la caméra avance, chaque zone bouge comme SHARP.
+    // la forme dépend aussi du mode de cadre et, en membrane, de l'enfoncement en cours
+    const bendKey = (idx) => idx + '|' + sharp.frameMode + (sharp.frameMode === 3 ? '|' + sharp.membraneBand + '|' + sharpScenes.membValue().toFixed(2) : '');
     function bendPhoto(idx) {
       const grid = sharpScenes.depthGrid(idx);
       if (!grid) return false;
       const pos = photoPlane.geometry.attributes.position, g = sharp.depthGamma;
       for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
         const u = -HALF_U + 2 * HALF_U * i / (GW - 1), v = -HALF_V + 2 * HALF_V * j / (GH - 1);
-        const zc = Math.pow(Math.max(grid[j * GW + i], 0.05), g);   // même compression de profondeur que les gaussiennes
+        let zc = Math.pow(Math.max(grid[j * GW + i], 0.05), g);   // même compression de profondeur que les gaussiennes
+        if (sharp.frameMode === 3) zc = sharpScenes.membraneZ(zc, u, v);   // membrane : même enfoncement que les gaussiennes (plate au départ)
         pos.setXYZ(j * GW + i, 25 * u * zc, -25 * v * zc, 25 - 25 * zc);
       }
       pos.needsUpdate = true;
       photoPlane.geometry.computeBoundingSphere();
-      photoBentFor = idx;
+      photoBentFor = bendKey(idx);
       return true;
     }
     function updatePhotoPlane() {
@@ -2427,8 +2430,8 @@
       if (tex && photoPlane.material.map !== tex) { photoPlane.material.map = tex; photoPlane.material.needsUpdate = true; }
       photoPlane.material.opacity = photoW;
       // pliée selon la profondeur SHARP de la scène affichée
-      if (photoBentFor !== sharpScenes.current) bendPhoto(sharpScenes.current);
-      if (photoBentFor !== sharpScenes.current) photoPlane.visible = false; // pas encore de carte : on attend
+      if (photoPlane.visible && photoBentFor !== bendKey(sharpScenes.current)) bendPhoto(sharpScenes.current);
+      if (photoBentFor == null || !photoBentFor.startsWith(sharpScenes.current + '|')) photoPlane.visible = false; // pas encore de carte : on attend
       return photoW;
     }
 
@@ -2479,7 +2482,7 @@
     // gs.html?cadre=fixe : rien ne sort du cadre ; gs.html?cadre=bords : seuls les bords de la photo sont coupés
     // paramètres de l'adresse : un « ? » en trop (gs.html?mode=gs?cadre=membrane) compte comme un « & »
     const urlParams = new URLSearchParams(location.search.slice(1).replace(/\?/g, '&'));
-    { const c = urlParams.get('cadre'); if (c === 'fixe') sharp.frameMode = 1; else if (c === 'bords') sharp.frameMode = 2; else if (c === 'membrane') sharp.frameMode = 3; }
+    { const c = urlParams.get('cadre'); if (c === 'fixe') sharp.frameMode = 1; else if (c === 'bords') sharp.frameMode = 2; else if (c === 'membrane') sharp.frameMode = 3; else if (c === 'origine') sharp.frameMode = 0; }
     // gs.html?mode=gs : démarrer directement en gaussiennes SHARP
     const startInGs = urlParams.get('mode') === 'gs';
     window.photoVolumeGS = { sharp, sharpScenes, setZoom, setPointsDepth, setSplatMode, gs, field: splatField, spark, camera, isOn: () => splatMode }; // accès console pour les tests
