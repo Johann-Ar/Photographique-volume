@@ -163,9 +163,7 @@ function makeLayer(url, isMol) {
 
 // Changement de photo automatique, sans chevauchement :
 // pause sur la photo -> dissolution en cellules -> noir -> la nouvelle photo se recompose
-export const TRANSITION = { wait: 600, out: 800, black: 250, in: 800 }; // millisecondes
-// membrane : le changement se fait en fondu enchaîné de photo à photo (gs.html), plus court, sans noir
-export const TRANSITION_MEMB = { wait: 200, out: 550, black: 0, in: 550 };
+export const TRANSITION = { wait: 500, out: 850, black: 150, in: 900 }; // millisecondes (noir plus court, arrivée un peu plus lente)
 
 // Grille de profondeur (GW x GH) vue depuis le point de vue SHARP : pour chaque case, la profondeur de la
 // matière visible (25e centile des gaussiennes qui s'y projettent = surface la plus proche), lissée.
@@ -297,13 +295,9 @@ export class SharpScenes {
   show(i) { this.current = i; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(); this._apply(); }
 
   // Lancer le changement de photo (automatique, chronométré)
-  // Avancement du fondu enchaîné de la photo 2D (mode membrane) : 0 -> 1 pendant la transition, null sinon
-  crossfade() {
-    if (this.next == null) return null;
-    const T = TRANSITION_MEMB, x = (performance.now() - this.t0 - T.wait) / (T.out + T.black + T.in);
-    const k = Math.min(1, Math.max(0, x));
-    return k * k * (3 - 2 * k);
-  }
+  // Recomposition de la nouvelle photo en cours : avancement 0..1 (null sinon). La photo 2D revient pendant
+  // la fin de la recomposition au lieu d'apparaître d'un coup une fois les cellules en place.
+  arrival() { return this.next != null && this.phase === 'run' && this.fadeNext > 0 ? this.fadeNext : null; }
   startTransition(i) {
     if (i === this.current || this.next != null) return;
     this.next = i; this._keep(); this.t0 = performance.now();
@@ -312,10 +306,18 @@ export class SharpScenes {
   setVisible(v) { this.visible = v; this._keep(); this._apply(); }
 
   // Mémoire : seulement la photo affichée et la suivante (environ 2,3 millions de gaussiennes chacune)
-  _keep() {
+  _keep(deferNext = false) {
     if (!this.visible || this.current == null) return;
     const keep = new Set([this.current, this.next ?? (this.current % this.count) + 1]);
-    for (const i of keep) this._get(i);
+    for (const i of keep) {
+      if (deferNext && i !== this.current && !this.scenes.has(i)) {
+        // photo d'après : chargée un peu plus tard, pas au moment où la nouvelle photo apparaît (à-coup)
+        clearTimeout(this._deferT);
+        this._deferT = setTimeout(() => this._keep(), 1200);
+        continue;
+      }
+      this._get(i);
+    }
     for (const [i, s] of this.scenes) if (!keep.has(i)) {
       for (const l of [s.base, s.mol]) { this.parent.remove(l.mesh); l.mesh.dispose(); }
       this.scenes.delete(i);
@@ -343,14 +345,16 @@ export class SharpScenes {
   // Avance la transition selon le temps (pas le scroll)
   _tick() {
     if (this.next == null) { this.phase = 'idle'; return; }
-    const T = sharp.frameMode === 3 ? TRANSITION_MEMB : TRANSITION, e = performance.now() - this.t0;
+    const T = TRANSITION, e = performance.now() - this.t0;
     this.phase = e < T.wait ? 'wait' : 'run';
     const ready = this.isReady(this.next);
+    // départ et arrivée en douceur (plus d'à-coup au début et à la fin de chaque moitié)
+    const ease = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
     if (e < T.wait) { this.fadeCur = 1; this.fadeNext = 0; }
-    else if (e < T.wait + T.out) { this.fadeCur = 1 - (e - T.wait) / T.out; this.fadeNext = 0; }
-    else if (e < T.wait + T.out + T.black || !ready) { this.fadeCur = 0; this.fadeNext = 0; }   // noir (et on attend la scène si besoin)
-    else if (e < T.wait + T.out + T.black + T.in) { this.fadeCur = 0; this.fadeNext = (e - T.wait - T.out - T.black) / T.in; }
-    else { this.current = this.next; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(); }
+    else if (e < T.wait + T.out) { this.fadeCur = 1 - ease((e - T.wait) / T.out); this.fadeNext = 0; }
+    else if (e < T.wait + T.out + T.black || !ready) { this.fadeCur = 0; this.fadeNext = 0; if (!ready) this.t0 = performance.now() - T.wait - T.out - T.black; }   // noir (on attend la scène si besoin, puis l'arrivée part de zéro)
+    else if (e < T.wait + T.out + T.black + T.in) { this.fadeCur = 0; this.fadeNext = ease((e - T.wait - T.out - T.black) / T.in); }
+    else { this.current = this.next; this.next = null; this.fadeCur = 1; this.fadeNext = 0; this._keep(true); }
   }
 
   // À chaque image. disparity : 0..7 (états du parcours)

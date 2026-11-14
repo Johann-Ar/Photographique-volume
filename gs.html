@@ -1743,7 +1743,7 @@
   <script type="module">
     import * as THREE from "three";
     import { gs, addSparkRenderer, buildCells, SplatField } from "./splatField.js";
-    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js?v=6";
+    import { sharp, SharpScenes, GW, GH, HALF_U, HALF_V } from "./sharpField.js?v=8";
 
     // ═══════════════════════════════════════════════
     // DÉTECTION MOBILE + ADAPTATION QUALITÉ
@@ -2399,7 +2399,7 @@
       splatMode = on;
       if (particles) particles.visible = !on;
       sharpScenes.setVisible(on);
-      if (!on) { photoPlane.visible = false; photoPlaneNext.visible = false; photoW = 0; backdrop.visible = false; }
+      if (!on) { photoPlane.visible = false; photoW = 0; backdrop.visible = false; }
       camera.position.z = -minZoom - (-minZoom - (on ? gsCamEnd() : maxZoom)) * zoomLevel;
       if (on) sharpScenes.show(currentImageIndex);
       else { lastAppliedDisparity = null; if (particles && !isTransitioning) loadImage(currentImageIndex); } // retour aux points : profondeur et couleurs à jour
@@ -2428,11 +2428,6 @@
     photoPlane.renderOrder = 10;
     photoPlane.visible = false;
     sceneGroup.add(photoPlane);
-    const photoPlaneNext = new THREE.Mesh(photoPlane.geometry,
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, toneMapped: false, depthWrite: false, depthTest: false }));
-    photoPlaneNext.renderOrder = 11;
-    photoPlaneNext.visible = false;
-    sceneGroup.add(photoPlaneNext);
     const photoTextures = new Map();
     function photoTexture(idx) {
       if (photoTextures.has(idx)) return photoTextures.get(idx);
@@ -2473,27 +2468,23 @@
     function updatePhotoPlane() {
       // fondu court : les couleurs étant alignées, la photo et SHARP se superposent exactement au point de vue
       const PHOTO_FADE = 0.06;   // fini avant que la caméra bouge vraiment (photo posée à la profondeur médiane)
-      const memb = sharp.frameMode === 3;
-      // membrane : la photo reste affichée pendant le changement (fondu enchaîné photo -> photo par-dessus)
-      const flat = splatMode && zoomLevel < PHOTO_FADE && (memb || sharpScenes.phase !== 'run');
+      // pendant le changement de photo, la photo 2D laisse la place aux cellules qui se défont puis se recomposent
+      const arr = splatMode ? sharpScenes.arrival() : null;
+      const idx = arr != null ? sharpScenes.next : sharpScenes.current;
+      const flat = splatMode && zoomLevel < PHOTO_FADE && (sharpScenes.phase !== 'run' || arr != null);
       const k = Math.min(1, zoomLevel / PHOTO_FADE);
-      const target = flat ? 1 - k * k * (3 - 2 * k) : 0;
+      let target = flat ? 1 - k * k * (3 - 2 * k) : 0;
+      if (arr != null) { const a = Math.max(0, (arr - 0.45) / 0.55); target *= a * a * (3 - 2 * a); }   // revient sur la 2e moitié
       if (window.photoVolumeGS && window.photoVolumeGS.forcePhoto != null) { photoW = window.photoVolumeGS.forcePhoto; }
       else photoW += (target - photoW) * 0.08;  // toujours progressif, un peu plus doux
       if (photoW < 0.002) photoW = 0;
-      const tex = photoW > 0 ? photoTexture(sharpScenes.current) : null;
+      const tex = photoW > 0 ? photoTexture(idx) : null;
       photoPlane.visible = !!tex && photoW > 0;
       if (tex && photoPlane.material.map !== tex) { photoPlane.material.map = tex; photoPlane.material.needsUpdate = true; }
       photoPlane.material.opacity = photoW;
-      // pliée selon la profondeur SHARP de la scène affichée
-      if (photoPlane.visible && photoBentFor !== bendKey(sharpScenes.current)) bendPhoto(sharpScenes.current);
-      if (photoBentFor == null || !photoBentFor.startsWith(sharpScenes.current + '|')) photoPlane.visible = false; // pas encore de carte : on attend
-      // photo suivante, en fondu par-dessus (même plan : à plat au départ, les deux photos se superposent exactement)
-      const xf = memb && splatMode ? sharpScenes.crossfade() : null;
-      const ntex = xf != null && xf > 0 ? photoTexture(sharpScenes.next) : null;
-      photoPlaneNext.visible = !!ntex && photoPlane.visible;
-      if (ntex && photoPlaneNext.material.map !== ntex) { photoPlaneNext.material.map = ntex; photoPlaneNext.material.needsUpdate = true; }
-      photoPlaneNext.material.opacity = (xf || 0) * photoW;
+      // pliée selon la profondeur SHARP de la scène affichée (ou de celle qui se recompose)
+      if (photoPlane.visible && photoBentFor !== bendKey(idx)) bendPhoto(idx);
+      if (photoBentFor == null || !photoBentFor.startsWith(idx + '|')) photoPlane.visible = false; // pas encore de carte : on attend
       return photoW;
     }
 
@@ -4848,7 +4839,9 @@
         const photoWeight = updatePhotoPlane();
         // Résolution : pleine tant que la photo nette est à l'écran ; dans le volume (flou par nature), 1 pixel
         // par point d'écran suffit et divise par ~2 le travail de la carte graphique (sinon à-coups au scroll rapide)
-        { const pr = Math.min(window.devicePixelRatio, photoWeight > 0.02 || !sharpScenes.isReady(sharpScenes.current) ? 1.5 : 1.0);
+        // (selon la position dans le parcours, pas l'opacité de la photo : sinon chaque changement de photo, qui efface
+        // puis remet la photo, basculait deux fois la résolution -> réallocation de l'écran, à-coups)
+        { const pr = Math.min(window.devicePixelRatio, zoomLevel < 0.08 || !sharpScenes.isReady(sharpScenes.current) ? 1.5 : 1.0);
           if (pr !== renderer.getPixelRatio()) { renderer.setPixelRatio(pr); renderer.setSize(window.innerWidth, window.innerHeight); needsRender = true; } }
         updateBackdrop(photoWeight);
         const gsChanged = sharpScenes.update({
